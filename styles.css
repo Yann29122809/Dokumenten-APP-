@@ -233,6 +233,24 @@ input[type="password"]:focus {
   margin: -1px;
 }
 
+/* ---------- Update-Hinweis ---------- */
+.update-banner {
+  appearance: none;
+  border: 0;
+  width: 100%;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 10px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.update-banner[hidden] { display: none; }
+.update-banner:not([hidden]) + .app-header { padding-top: 12px; }
+body.locked .update-banner { display: none; }
+
 /* ---------- Sperrbildschirm ---------- */
 .lock { display: none; }
 

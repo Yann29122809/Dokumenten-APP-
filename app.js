@@ -295,8 +295,37 @@ start();
 // =====================================================================
 // Service Worker (macht die App offline-fähig)
 // =====================================================================
+// Updates: Bei jedem Öffnen der App wird geprüft, ob es eine neue
+// Version gibt. Ist eine da, lädt die App sich neu – im gesperrten
+// Zustand sofort, sonst nach Tippen auf den Hinweis oben.
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch((err) => {
-    console.warn('Service Worker konnte nicht registriert werden:', err);
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    if (document.body.classList.contains('locked')) {
+      reloading = true;
+      location.reload();
+    } else {
+      $('update-banner').hidden = false;
+    }
   });
+
+  $('update-banner').addEventListener('click', () => {
+    reloading = true;
+    location.reload();
+  });
+
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then((registration) => {
+      const checkForUpdate = () => registration.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') checkForUpdate();
+      });
+      window.addEventListener('online', checkForUpdate);
+    })
+    .catch((err) => {
+      console.warn('Service Worker konnte nicht registriert werden:', err);
+    });
 }
