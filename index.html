@@ -79,25 +79,61 @@
   <main class="app-main">
     <!-- Bildschirm 1: Scannen -->
     <section id="screen-scan" class="screen is-active" aria-labelledby="screen-title">
-      <div class="placeholder">
+      <!-- Noch keine Seite aufgenommen -->
+      <div id="scan-empty" class="placeholder">
         <svg class="placeholder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
         <h2>Dokument scannen</h2>
-        <p>Hier kannst du später Rechnungen, Briefe und andere Dokumente mit der Kamera erfassen.</p>
-        <button class="btn-primary" type="button" disabled>Scan starten</button>
-        <p class="hint">Noch nicht verfügbar</p>
+        <p>Fotografiere ein Dokument. Bei mehreren Seiten nimmst du einfach eine nach der anderen auf.</p>
+        <div class="stack">
+          <button class="btn-primary" type="button" id="scan-camera">Foto aufnehmen</button>
+          <button class="btn-secondary" type="button" id="scan-library">Aus Fotos wählen</button>
+        </div>
+        <p class="hint tip">Tipp: Dokument flach auf einen dunklen Untergrund legen, gutes Licht, von oben fotografieren.</p>
       </div>
+
+      <!-- Entwurf mit aufgenommenen Seiten -->
+      <div id="scan-draft" hidden>
+        <div class="draft-head">
+          <strong id="scan-count">1 Seite</strong>
+        </div>
+        <div class="page-grid" id="scan-pages"></div>
+        <div class="button-row">
+          <button class="btn-secondary" type="button" id="scan-add-camera">+ Kamera</button>
+          <button class="btn-secondary" type="button" id="scan-add-library">+ Aus Fotos</button>
+        </div>
+        <label class="check toggle-row">
+          <input type="checkbox" id="scan-filter" checked>
+          Scan-Filter (schwarz-weiß, kräftiger Kontrast)
+        </label>
+
+        <form id="scan-form" class="card form-card" novalidate>
+          <label>Kategorie
+            <select id="doc-category"></select>
+          </label>
+          <label>Titel
+            <input type="text" id="doc-title" maxlength="120" placeholder="z. B. Stromrechnung Oktober" autocomplete="off">
+          </label>
+          <label>Datum des Dokuments
+            <input type="date" id="doc-date">
+          </label>
+          <label>Notiz (optional)
+            <textarea id="doc-note" rows="2" maxlength="1000"></textarea>
+          </label>
+          <p class="error" id="scan-error" role="alert"></p>
+          <button class="btn-primary" type="submit" id="scan-save">Verschlüsselt speichern</button>
+          <button class="btn-text danger" type="button" id="scan-discard">Verwerfen</button>
+        </form>
+      </div>
+
+      <p class="hint center" id="scan-status" role="status"></p>
+
+      <input class="sr-only" type="file" id="input-camera" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+      <input class="sr-only" type="file" id="input-library" accept="image/*" multiple tabindex="-1" aria-hidden="true">
     </section>
 
     <!-- Bildschirm 2: Ablage -->
     <section id="screen-archive" class="screen" aria-labelledby="screen-title" hidden>
-      <ul class="category-list">
-        <li><span class="dot dot-invoice"></span>Rechnungen<span class="count">0</span></li>
-        <li><span class="dot dot-bank"></span>Bank<span class="count">0</span></li>
-        <li><span class="dot dot-insurance"></span>Versicherung<span class="count">0</span></li>
-        <li><span class="dot dot-letter"></span>Briefe<span class="count">0</span></li>
-        <li><span class="dot dot-payslip"></span>Gehaltsabrechnungen<span class="count">0</span></li>
-      </ul>
-      <p class="hint center">Noch keine Dokumente abgelegt.</p>
+      <div id="archive-view"></div>
     </section>
 
     <!-- Bildschirm 3: Einstellungen -->
@@ -139,19 +175,45 @@
         <p class="group-note">Verschlüsselung: AES-256 · Schlüssel aus Passwort mit PBKDF2 (600.000 Runden)</p>
       </div>
 
-      <div class="settings-group">
-        <h2>Daten</h2>
+      <div class="settings-group" id="backup-group">
+        <h2>Backup</h2>
         <div class="card">
-          <div class="settings-row"><span>Backup exportieren</span><span class="hint">bald</span></div>
-          <div class="settings-row"><span>Backup importieren</span><span class="hint">bald</span></div>
+          <div class="settings-row"><span>Letztes Backup</span><span class="hint" id="last-backup">noch nie</span></div>
+          <button class="settings-row" type="button" id="backup-create">
+            <span>Backup erstellen</span><span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <div class="inline-form" id="backup-ready" hidden>
+            <p class="success" id="backup-ready-text"></p>
+            <button class="btn-primary" type="button" id="backup-save">Backup-Datei sichern …</button>
+            <p class="hint">Im nächsten Fenster „In Dateien sichern“ wählen, z.&nbsp;B. in iCloud Drive.</p>
+          </div>
+          <button class="settings-row" type="button" id="backup-import">
+            <span>Backup einlesen</span><span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <form class="inline-form" id="import-form" hidden novalidate>
+            <p id="import-summary"></p>
+            <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
+            <label>Passwort des Backups
+              <input type="password" id="import-password" autocomplete="current-password" required>
+            </label>
+            <p class="hint">Das Passwort, das galt, als das Backup erstellt wurde.</p>
+            <p class="error" id="import-error" role="alert"></p>
+            <button class="btn-primary" type="submit" id="import-submit">Dokumente übernehmen</button>
+            <button class="btn-text" type="button" id="import-cancel">Abbrechen</button>
+          </form>
+          <p class="inline-form success" id="import-result" role="status" hidden></p>
         </div>
+        <p class="group-note">Das Backup ist verschlüsselt. Bewahre es außerhalb des iPhones auf, z.&nbsp;B. in iCloud Drive oder auf einem USB-Stick. Mach regelmäßig ein neues.</p>
+        <input class="sr-only" type="file" id="backup-file" tabindex="-1" aria-hidden="true">
       </div>
 
       <div class="settings-group">
         <h2>Info</h2>
         <div class="card">
-          <div class="settings-row"><span>Version</span><span class="hint">0.2.1</span></div>
+          <div class="settings-row"><span>Version</span><span class="hint">0.3.0</span></div>
           <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
+          <div class="settings-row"><span>Dokumente</span><span class="hint" id="doc-count">–</span></div>
+          <div class="settings-row"><span>Belegter Speicher</span><span class="hint" id="storage-used">–</span></div>
           <div class="settings-row"><span>Dauerhafter Speicher</span><span class="hint" id="persist-status">–</span></div>
         </div>
       </div>

@@ -1,5 +1,9 @@
 import { createVault, openVault, changeVaultPassword, WrongPasswordError } from './crypto.js';
 import { getMeta, setMeta } from './db.js';
+import { formatBytes } from './dom.js';
+import { initScan, clearScan } from './scan.js';
+import { initArchive, refreshArchive, clearArchive, showCategories, documentCount } from './archive.js';
+import { createBackup, saveBackupFile, readBackupFile, importBackup, BackupFormatError } from './backup.js';
 
 const $ = (id) => document.getElementById(id);
 const MIN_PASSWORD_LENGTH = 8;
@@ -7,7 +11,9 @@ const MIN_PASSWORD_LENGTH = 8;
 // Der entsperrte Schlüssel lebt nur im Arbeitsspeicher, solange die App offen ist.
 let vaultKey = null;
 let vaultRecord = null;
-let settings = { autoLockMinutes: 5 };
+let settings = { autoLockMinutes: 5, lastBackup: null };
+
+const saveSettings = () => setMeta('settings', settings);
 
 // =====================================================================
 // Navigation zwischen den drei Bildschirmen
@@ -32,6 +38,8 @@ function showScreen(name) {
     }
   });
   document.querySelector('.app-main').scrollTop = 0;
+  if (name === 'archive') showCategories();
+  if (name === 'settings') updateInfo();
 }
 
 tabs.forEach((tab) => tab.addEventListener('click', () => showScreen(tab.dataset.screen)));
@@ -69,16 +77,25 @@ function showLockView(view) {
   $('unlock-form').hidden = view !== 'unlock';
 }
 
-function unlocked(key) {
+async function unlocked(key) {
   vaultKey = key;
   clearPasswordFields();
   document.body.classList.remove('locked');
   resetInactivityTimer();
+  try {
+    await refreshArchive();
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function lock() {
   if (!vaultRecord) return;
   vaultKey = null;
+  // Alles Entschlüsselte aus dem Speicher und vom Bildschirm entfernen
+  clearScan();
+  clearArchive();
+  resetBackupUi();
   clearPasswordFields();
   $('unlock-error').textContent = '';
   $('change-pw-form').hidden = true;
@@ -107,10 +124,10 @@ $('setup-form').addEventListener('submit', async (event) => {
   try {
     const { record, key } = await createVault(pw1);
     await setMeta('vault', record);
-    await setMeta('settings', settings);
+    await saveSettings();
     vaultRecord = record;
     await requestPersistentStorage();
-    unlocked(key);
+    await unlocked(key);
   } catch (err) {
     console.error(err);
     error.textContent = 'Einrichtung fehlgeschlagen. Bitte versuche es erneut.';
@@ -135,7 +152,7 @@ $('unlock-form').addEventListener('submit', async (event) => {
     const key = await openVault(vaultRecord, input.value);
     failedAttempts = 0;
     setBusy(button, false);
-    unlocked(key);
+    await unlocked(key);
   } catch (err) {
     input.value = '';
     if (!(err instanceof WrongPasswordError)) {
@@ -171,11 +188,28 @@ $('unlock-form').addEventListener('submit', async (event) => {
 // ---------- Automatisch sperren ----------
 let inactivityTimer = null;
 let hiddenSince = null;
+let hiddenForExternal = false;
+// Während Kamera, Fotoauswahl oder Teilen-Menü offen sind, verlässt man die
+// App kurz. Dann soll nicht sofort gesperrt werden (sonst wäre das Foto weg).
+let externalUntil = 0;
+const EXTERNAL_GRACE_MS = 10 * 60 * 1000;
+
+function suspendAutoLock() {
+  externalUntil = Date.now() + EXTERNAL_GRACE_MS;
+}
+
+function resumeAutoLock() {
+  externalUntil = 0;
+  resetInactivityTimer();
+}
 
 function resetInactivityTimer() {
   clearTimeout(inactivityTimer);
   if (!vaultKey || settings.autoLockMinutes <= 0) return;
-  inactivityTimer = setTimeout(lock, settings.autoLockMinutes * 60 * 1000);
+  inactivityTimer = setTimeout(() => {
+    if (Date.now() < externalUntil) resetInactivityTimer();
+    else lock();
+  }, settings.autoLockMinutes * 60 * 1000);
 }
 
 ['pointerdown', 'keydown', 'scroll'].forEach((type) => {
@@ -186,23 +220,47 @@ document.addEventListener('visibilitychange', () => {
   if (!vaultKey) return;
   if (document.visibilityState === 'hidden') {
     hiddenSince = Date.now();
-    if (settings.autoLockMinutes <= 0) lock();
+    hiddenForExternal = Date.now() < externalUntil;
+    if (!hiddenForExternal && settings.autoLockMinutes <= 0) lock();
   } else if (hiddenSince !== null) {
     const away = Date.now() - hiddenSince;
     hiddenSince = null;
-    if (away >= settings.autoLockMinutes * 60 * 1000) lock();
+    const limit = hiddenForExternal ? EXTERNAL_GRACE_MS : settings.autoLockMinutes * 60 * 1000;
+    hiddenForExternal = false;
+    if (away >= limit) lock();
     else resetInactivityTimer();
   }
 });
 
 // =====================================================================
-// Einstellungen
+// Bildschirme Scannen und Ablage
+// =====================================================================
+initScan({
+  getKey: () => vaultKey,
+  suspendAutoLock,
+  resumeAutoLock,
+  onSaved: () => refreshArchive().catch((err) => console.error(err))
+});
+
+initArchive({
+  getKey: () => vaultKey,
+  suspendAutoLock,
+  resumeAutoLock,
+  getLastBackup: () => settings.lastBackup,
+  goToBackup: () => {
+    showScreen('settings');
+    $('backup-group').scrollIntoView({ block: 'start' });
+  }
+});
+
+// =====================================================================
+// Einstellungen: Sicherheit
 // =====================================================================
 $('lock-now').addEventListener('click', lock);
 
 $('autolock-select').addEventListener('change', async (event) => {
   settings.autoLockMinutes = Number(event.target.value);
-  await setMeta('settings', settings);
+  await saveSettings();
   resetInactivityTimer();
 });
 
@@ -234,7 +292,7 @@ $('change-pw-form').addEventListener('submit', async (event) => {
     await setMeta('vault', newRecord);
     vaultRecord = newRecord;
     clearPasswordFields();
-    success.textContent = 'Passwort wurde geändert.';
+    success.textContent = 'Passwort wurde geändert. Ältere Backups öffnest du weiterhin mit dem alten Passwort.';
   } catch (err) {
     if (err instanceof WrongPasswordError) {
       error.textContent = 'Das aktuelle Passwort ist falsch.';
@@ -248,14 +306,150 @@ $('change-pw-form').addEventListener('submit', async (event) => {
   }
 });
 
-// ---------- Dauerhafter Speicher ----------
+// =====================================================================
+// Einstellungen: Backup
+// =====================================================================
+let pendingBackup = null; // erstellte, noch nicht gesicherte Backup-Datei
+let pendingImport = null; // eingelesene Backup-Datei, wartet auf Passwort
+
+function resetBackupUi() {
+  pendingBackup = null;
+  pendingImport = null;
+  $('backup-ready').hidden = true;
+  $('import-form').hidden = true;
+  $('import-result').hidden = true;
+  $('import-error').textContent = '';
+  $('backup-create').disabled = false;
+}
+
+$('backup-create').addEventListener('click', async () => {
+  if (!vaultKey) return;
+  resetBackupUi();
+  const button = $('backup-create');
+  const label = button.querySelector('span');
+  label.textContent = 'Backup wird erstellt …';
+  button.disabled = true;
+  try {
+    pendingBackup = await createBackup(vaultKey);
+    const size = formatBytes(pendingBackup.blob.size);
+    $('backup-ready-text').textContent = pendingBackup.count === 1
+      ? `Backup mit 1 Dokument ist bereit (${size}).`
+      : `Backup mit ${pendingBackup.count} Dokumenten ist bereit (${size}).`;
+    $('backup-ready').hidden = false;
+  } catch (err) {
+    console.error(err);
+    alert('Backup konnte nicht erstellt werden.');
+  } finally {
+    label.textContent = 'Backup erstellen';
+    button.disabled = false;
+  }
+});
+
+// Eigener Fingertipp nötig: das iPhone öffnet „Teilen“ nur direkt nach einer Berührung
+$('backup-save').addEventListener('click', async () => {
+  if (!pendingBackup) return;
+  suspendAutoLock();
+  try {
+    const result = await saveBackupFile(pendingBackup);
+    if (result !== 'cancelled') {
+      settings.lastBackup = Date.now();
+      await saveSettings();
+      $('backup-ready').hidden = true;
+      pendingBackup = null;
+      updateInfo();
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Die Backup-Datei konnte nicht gesichert werden.');
+  } finally {
+    resumeAutoLock();
+  }
+});
+
+$('backup-import').addEventListener('click', () => {
+  resetBackupUi();
+  suspendAutoLock();
+  $('backup-file').click();
+});
+
+$('backup-file').addEventListener('cancel', resumeAutoLock);
+$('backup-file').addEventListener('change', async () => {
+  resumeAutoLock();
+  const file = $('backup-file').files[0];
+  $('backup-file').value = '';
+  if (!file) return;
+  try {
+    pendingImport = await readBackupFile(file);
+    const { header } = pendingImport;
+    const created = new Date(header.created).toLocaleDateString('de-DE');
+    $('import-summary').textContent = header.docs.length === 1
+      ? `Backup vom ${created} mit 1 Dokument.`
+      : `Backup vom ${created} mit ${header.docs.length} Dokumenten.`;
+    $('import-form').hidden = false;
+    $('import-password').focus();
+  } catch (err) {
+    console.error(err);
+    alert(err instanceof BackupFormatError ? err.message : 'Die Datei konnte nicht gelesen werden.');
+  }
+});
+
+$('import-cancel').addEventListener('click', resetBackupUi);
+
+$('import-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!pendingImport || !vaultKey) return;
+  const error = $('import-error');
+  const password = $('import-password').value;
+  if (!password) { error.textContent = 'Bitte gib das Passwort des Backups ein.'; return; }
+  error.textContent = '';
+
+  const button = $('import-submit');
+  setBusy(button, true, 'Wird geprüft …');
+  try {
+    const result = await importBackup(vaultKey, pendingImport, password, (done, total) => {
+      button.textContent = `Dokument ${done} von ${total} …`;
+    });
+    clearPasswordFields();
+    resetBackupUi();
+    const parts = [`${result.imported} Dokument(e) übernommen.`];
+    if (result.skipped) parts.push(`${result.skipped} waren schon vorhanden.`);
+    $('import-result').textContent = parts.join(' ');
+    $('import-result').hidden = false;
+    await refreshArchive();
+    updateInfo();
+  } catch (err) {
+    $('import-password').value = '';
+    if (err instanceof WrongPasswordError) error.textContent = 'Das Passwort passt nicht zu diesem Backup.';
+    else if (err instanceof BackupFormatError) error.textContent = err.message;
+    else { console.error(err); error.textContent = 'Einlesen fehlgeschlagen. Ist der Speicher voll?'; }
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+// =====================================================================
+// Einstellungen: Info
+// =====================================================================
+async function updateInfo() {
+  $('last-backup').textContent = settings.lastBackup
+    ? new Date(settings.lastBackup).toLocaleDateString('de-DE')
+    : 'noch nie';
+  $('doc-count').textContent = String(documentCount());
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      const { usage } = await navigator.storage.estimate();
+      $('storage-used').textContent = formatBytes(usage);
+    } catch { /* egal */ }
+  }
+  updatePersistStatus();
+}
+
 // Bittet den Browser, die Daten nicht automatisch zu löschen, wenn der Platz knapp wird.
 async function requestPersistentStorage() {
   if (!navigator.storage || !navigator.storage.persist) return;
   try {
     await navigator.storage.persist();
   } catch { /* nicht schlimm */ }
-  updatePersistStatus();
 }
 
 async function updatePersistStatus() {
@@ -283,7 +477,7 @@ async function start() {
 
     vaultRecord = await getMeta('vault');
     showLockView(vaultRecord ? 'unlock' : 'setup');
-    updatePersistStatus();
+    if (vaultRecord) requestPersistentStorage();
   } catch (err) {
     console.error(err);
     $('lock-loading').textContent = 'Der lokale Speicher konnte nicht geöffnet werden.';
@@ -293,11 +487,10 @@ async function start() {
 start();
 
 // =====================================================================
-// Service Worker (macht die App offline-fähig)
-// =====================================================================
 // Updates: Bei jedem Öffnen der App wird geprüft, ob es eine neue
 // Version gibt. Ist eine da, lädt die App sich neu – im gesperrten
 // Zustand sofort, sonst nach Tippen auf den Hinweis oben.
+// =====================================================================
 if ('serviceWorker' in navigator) {
   const hadController = Boolean(navigator.serviceWorker.controller);
   let reloading = false;

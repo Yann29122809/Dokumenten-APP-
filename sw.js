@@ -2,7 +2,7 @@
 
 // Bei jeder Änderung an den Dateien diese Nummer erhöhen,
 // damit Handys die neue Version laden.
-const CACHE_NAME = 'dokumente-v4';
+const CACHE_NAME = 'dokumente-v5';
 
 // Alle Dateien, die offline verfügbar sein sollen (relative Pfade,
 // damit es auch unter https://<name>.github.io/<repo>/ funktioniert).
@@ -13,6 +13,12 @@ const APP_FILES = [
   './app.js',
   './crypto.js',
   './db.js',
+  './dom.js',
+  './docs.js',
+  './images.js',
+  './scan.js',
+  './archive.js',
+  './backup.js',
   './manifest.json',
   './icon.svg',
   './icon-192.png',
