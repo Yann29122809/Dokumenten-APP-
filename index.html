@@ -8,7 +8,7 @@
 
   <!-- Sicherheit: nur eigene Dateien laden, keine externen Server -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'">
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
 
   <!-- PWA -->
@@ -26,7 +26,48 @@
 
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="locked">
+  <!-- ================= Sperrbildschirm ================= -->
+  <div id="lock" class="lock">
+    <img class="lock-logo" src="icon.svg" alt="" width="72" height="72">
+
+    <!-- Wird beim Laden angezeigt -->
+    <p id="lock-loading" class="hint">Wird geladen …</p>
+
+    <!-- Ersteinrichtung -->
+    <form id="setup-form" class="lock-form" hidden novalidate>
+      <h1>Passwort festlegen</h1>
+      <p class="lock-text">Mit diesem Passwort werden alle deine Dokumente auf diesem Gerät verschlüsselt.</p>
+      <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
+      <label>Passwort
+        <input type="password" id="setup-password" autocomplete="new-password" minlength="8" required>
+      </label>
+      <label>Passwort wiederholen
+        <input type="password" id="setup-password2" autocomplete="new-password" minlength="8" required>
+      </label>
+      <p class="hint">Mindestens 8 Zeichen. Am sichersten ist ein Satz aus mehreren Wörtern, z.&nbsp;B. „Blauer Kaffee tanzt im Regen“.</p>
+      <div class="warning">
+        <strong>Wichtig:</strong> Wenn du das Passwort vergisst, kann <em>niemand</em> deine Dokumente wiederherstellen – auch nicht der Entwickler.
+        <label class="check"><input type="checkbox" id="setup-understood"> Ich habe das verstanden</label>
+      </div>
+      <p class="error" id="setup-error" role="alert"></p>
+      <button class="btn-primary" type="submit" id="setup-submit">Tresor anlegen</button>
+    </form>
+
+    <!-- Entsperren -->
+    <form id="unlock-form" class="lock-form" hidden novalidate>
+      <h1>Gesperrt</h1>
+      <p class="lock-text">Gib dein Passwort ein, um deine Dokumente zu öffnen.</p>
+      <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
+      <label>Passwort
+        <input type="password" id="unlock-password" autocomplete="current-password" required>
+      </label>
+      <p class="error" id="unlock-error" role="alert"></p>
+      <button class="btn-primary" type="submit" id="unlock-submit">Entsperren</button>
+    </form>
+  </div>
+
+  <!-- ================= Eigentliche App ================= -->
   <header class="app-header">
     <h1 id="screen-title">Scannen</h1>
   </header>
@@ -59,18 +100,56 @@
     <section id="screen-settings" class="screen" aria-labelledby="screen-title" hidden>
       <div class="settings-group">
         <h2>Sicherheit</h2>
-        <div class="settings-row"><span>Passwort festlegen</span><span class="hint">bald</span></div>
-        <div class="settings-row"><span>Automatisch sperren</span><span class="hint">bald</span></div>
+        <div class="card">
+          <button class="settings-row" type="button" id="lock-now">
+            <span>Jetzt sperren</span><span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <label class="settings-row">
+            <span>Automatisch sperren</span>
+            <select id="autolock-select">
+              <option value="0">Sofort beim Verlassen</option>
+              <option value="1">Nach 1 Minute</option>
+              <option value="5">Nach 5 Minuten</option>
+              <option value="15">Nach 15 Minuten</option>
+            </select>
+          </label>
+          <button class="settings-row" type="button" id="change-pw-toggle" aria-expanded="false" aria-controls="change-pw-form">
+            <span>Passwort ändern</span><span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <form id="change-pw-form" class="inline-form" hidden novalidate>
+            <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
+            <label>Aktuelles Passwort
+              <input type="password" id="old-password" autocomplete="current-password" required>
+            </label>
+            <label>Neues Passwort
+              <input type="password" id="new-password" autocomplete="new-password" minlength="8" required>
+            </label>
+            <label>Neues Passwort wiederholen
+              <input type="password" id="new-password2" autocomplete="new-password" minlength="8" required>
+            </label>
+            <p class="error" id="change-pw-error" role="alert"></p>
+            <p class="success" id="change-pw-success" role="status"></p>
+            <button class="btn-primary" type="submit" id="change-pw-submit">Passwort ändern</button>
+          </form>
+        </div>
+        <p class="group-note">Verschlüsselung: AES-256 · Schlüssel aus Passwort mit PBKDF2 (600.000 Runden)</p>
       </div>
+
       <div class="settings-group">
         <h2>Daten</h2>
-        <div class="settings-row"><span>Backup exportieren</span><span class="hint">bald</span></div>
-        <div class="settings-row"><span>Backup importieren</span><span class="hint">bald</span></div>
+        <div class="card">
+          <div class="settings-row"><span>Backup exportieren</span><span class="hint">bald</span></div>
+          <div class="settings-row"><span>Backup importieren</span><span class="hint">bald</span></div>
+        </div>
       </div>
+
       <div class="settings-group">
         <h2>Info</h2>
-        <div class="settings-row"><span>Version</span><span class="hint" id="app-version">0.1.0</span></div>
-        <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
+        <div class="card">
+          <div class="settings-row"><span>Version</span><span class="hint">0.2.0</span></div>
+          <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
+          <div class="settings-row"><span>Dauerhafter Speicher</span><span class="hint" id="persist-status">–</span></div>
+        </div>
       </div>
     </section>
   </main>
@@ -91,6 +170,6 @@
     </button>
   </nav>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
