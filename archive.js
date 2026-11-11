@@ -20,7 +20,6 @@ let docs = [];        // ohne Papierkorb
 let trashed = [];     // im Papierkorb
 let view = { name: 'root' };
 let query = '';
-let searchFilter = { folder: '', period: '' };
 let objectUrls = [];
 let renderId = 0;   // verhindert, dass alte, langsame Ladevorgänge Neues überschreiben
 let currentPdf = null;
@@ -75,6 +74,7 @@ export function pageTextReady(docId) {
 
 export function clearArchive() {
   releaseUrls();
+  document.body.classList.remove('doc-open');
   docs = [];
   trashed = [];
   query = '';
@@ -158,8 +158,10 @@ function go(newView) {
 function render() {
   releaseUrls();
   renderId++;
+  document.body.classList.toggle('doc-open', view.name === 'detail');
   if (view.name === 'folder') renderFolder(view.id);
   else if (view.name === 'all') renderAll();
+  else if (view.name === 'collection') renderCollection(view.id);
   else if (view.name === 'detail') renderDetail(view.id);
   else renderRoot();
   // Startseite („Bald fällig“) aktualisieren
@@ -170,6 +172,28 @@ function render() {
 // Bausteine
 // ---------------------------------------------------------------------
 const pagesText = (n) => (n === 1 ? '1 Seite' : `${n} Seiten`);
+
+// Ordnerfarben (Fläche / Symbol) nach DESIGN.md; weitere aus derselben Reihe
+const FOLDER_COLORS = {
+  bank: ['#DDF5E7', '#17653A'], invoice: ['#FCEBD9', '#8A4B12'], insurance: ['#DEEBFB', '#1B4E8C'],
+  letter: ['#ECE9FE', '#3C3489'], payslip: ['#FFF1D6', '#8A5300']
+};
+const MORE_COLORS = [['#EFE3F8', '#6A2E94'], ['#FDE4EC', '#9B2C5A'], ['#DFF3F4', '#1C6B70'], ['#EEF2DA', '#4F6416'], ['#FBE7DE', '#8C3A1A']];
+
+export function folderPalette(folderId) {
+  const top = folderPath(folderId)[0];
+  if (!top) return MORE_COLORS[0];
+  if (FOLDER_COLORS[top.id]) return FOLDER_COLORS[top.id];
+  if (/kranken|arzt|gesundheit|medizin|klinik/i.test(top.name)) return MORE_COLORS[0];
+  let h = 0;
+  for (const c of top.id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return MORE_COLORS[h % MORE_COLORS.length];
+}
+
+const folderChip = (folderId, extra = '') => {
+  const [bg, fg] = folderPalette(folderId);
+  return el('span', { class: `f-chip ${extra}`, style: { background: bg, color: fg }, text: folderById(folderId)?.name || 'Ablage' });
+};
 const dot = (folderId) => el('span', { class: 'dot', style: { background: folderColor(folderId) } });
 
 function countIn(folderId) {
@@ -181,11 +205,12 @@ function countIn(folderId) {
 function folderTile(folder) {
   const subCount = childFolders(folder.id).length;
   const count = countIn(folder.id);
+  const [bg, fg] = folderPalette(folder.id);
   return el('button', {
-    type: 'button', class: 'tile', style: { '--tile': folderColor(folder.id) },
+    type: 'button', class: 'tile f-tile',
     onclick: () => go({ name: 'folder', id: folder.id })
   },
-    el('span', { class: 'tile-icon' }, icon('folder')),
+    el('span', { class: 'tile-icon', style: { background: bg, color: fg } }, icon('folder')),
     el('span', { class: 'tile-name', text: folder.name }),
     el('span', { class: 'tile-meta', text: [
       count === 1 ? '1 Dokument' : `${count} Dokumente`,
@@ -195,8 +220,8 @@ function folderTile(folder) {
 }
 
 function newTile(label, onclick) {
-  return el('button', { type: 'button', class: 'tile tile-new', onclick },
-    el('span', { class: 'tile-icon' }, icon('folderPlus')),
+  return el('button', { type: 'button', class: 'tile f-tile tile-new', onclick },
+    el('span', { class: 'tile-icon' }, icon('plus')),
     el('span', { class: 'tile-name', text: label })
   );
 }
@@ -246,11 +271,34 @@ function docRow(doc, showFolder, backView) {
 }
 
 function backButton(label, target) {
-  return el('button', { type: 'button', class: 'back-btn', onclick: () => go(target) }, icon('back'), label);
+  return el('button', { type: 'button', class: 'back-btn', onclick: () => (target.name === 'search' ? ctx.openSearch() : go(target)) }, icon('back'), label);
+}
+
+const COLLECTIONS = {
+  soon: { label: 'Bald fällig', icon: 'bell', cls: 'is-warn' },
+  year: { label: 'Dieses Jahr', icon: 'calendar2', cls: 'is-primary' },
+  contracts: { label: 'Verträge', icon: 'stack', cls: 'is-ok' }
+};
+
+/** Automatische Sammlungen – nur aus echten Daten berechnet. */
+function collectionDocs(id) {
+  const year = String(new Date().getFullYear());
+  if (id === 'soon') return openDeadlines(docs);
+  if (id === 'year') return docs.filter((d) => (d.meta.date || '').startsWith(year));
+  if (id === 'contracts') {
+    return docs.filter((d) => {
+      const r = reminderOf(d.meta);
+      if (r && ['Kündigung', 'Ablauf'].includes(r.kind)) return true;
+      const text = `${d.meta.title} ${(getPageTextsFor(d.id) || []).join(' ').slice(0, 3000)}`;
+      return /vertrag|police|versicherungsschein|vertragsnummer/i.test(text);
+    });
+  }
+  return [];
 }
 
 function viewLabel(v) {
   if (!v || v.name === 'root') return 'Ablage';
+  if (v.name === 'collection') return COLLECTIONS[v.id]?.label || 'Ablage';
   if (v.name === 'all') return 'Alle Dokumente';
   if (v.name === 'search') return 'Suche';
   if (v.name === 'folder') return folderById(v.id)?.name || 'Ablage';
@@ -261,86 +309,67 @@ function viewLabel(v) {
 // Start: Suche + Ablageorte
 // ---------------------------------------------------------------------
 function renderRoot() {
-  const results = el('div', { id: 'search-results' });
-  const folderList = el('div', {});
-  const search = el('input', {
-    type: 'search', class: 'search-input', placeholder: 'Titel, Text, Absender, Betrag, Datum …',
-    'aria-label': 'Dokumente durchsuchen', value: query, autocomplete: 'off', enterkeyhint: 'search'
-  });
-  const searchBox = el('label', { class: 'search-box' }, icon('search'), search);
-
-  // Filter: Ordner (inkl. Unterordner) und Zeitraum
-  const folderSelect = el('select', { class: 'filter-select', 'aria-label': 'Ordner' },
-    el('option', { value: '', text: 'Alle Ordner' }),
-    ...flatFolders().map((f) => el('option', { value: f.id, text: f.label, selected: f.id === searchFilter.folder }))
-  );
-  const year = new Date().getFullYear();
-  const periodSelect = el('select', { class: 'filter-select', 'aria-label': 'Zeitraum' },
-    ...[['', 'Jeder Zeitraum'], ['30', 'Letzte 30 Tage'], ['365', 'Letzte 12 Monate'], [`y${year}`, String(year)], [`y${year - 1}`, String(year - 1)], ['older', `Vor ${year - 1}`]]
-      .map(([v, t]) => el('option', { value: v, text: t, selected: v === searchFilter.period }))
-  );
-  const filters = el('div', { class: 'search-filters' }, folderSelect, periodSelect);
-  const recent = el('div', { class: 'recent-searches' });
-
-  const showRecent = () => {
-    const items = recentSearches();
-    recent.hidden = Boolean(search.value.trim()) || !items.length;
-    recent.replaceChildren(
-      el('span', { class: 'hint', text: 'Zuletzt gesucht' }),
-      ...items.map((q) => el('button', { type: 'button', class: 'chip', text: q, onclick: () => { search.value = q; update(); } }))
-    );
-  };
-
-  const update = () => {
-    query = search.value;
-    searchFilter = { folder: folderSelect.value, period: periodSelect.value };
-    const active = Boolean(query.trim());
-    folderList.hidden = active;
-    filters.hidden = !active;
-    showRecent();
-    if (!active) { results.replaceChildren(); return; }
-    renderId++;
-    releaseUrls();
-    const hits = runSearch(query, buildFilter());
-    results.replaceChildren(
-      el('p', { class: 'hint', text: hits.length === 1 ? '1 Treffer' : `${hits.length} Treffer` }),
-      hits.length ? el('div', { class: 'card' }, hits.slice(0, 60).map((h) => searchRow(h))) : el('p', { class: 'hint center', text: 'Nichts gefunden. Tipp: weniger oder kürzere Wörter versuchen.' })
-    );
-  };
-  search.addEventListener('input', update);
-  search.addEventListener('focus', showRecent);
-  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { search.blur(); rememberSearch(ctx.getKey(), search.value); } });
-  search.addEventListener('change', () => rememberSearch(ctx.getKey(), search.value));
-  folderSelect.addEventListener('change', update);
-  periodSelect.addEventListener('change', update);
-
   const roots = childFolders(null);
-  folderList.append(
-    backupReminder() || '',
-    deadlinesCard() || '',
-    el('h3', { class: 'section-label', text: 'Ablageorte' }),
-    el('div', { class: 'tile-grid' },
-      el('button', { type: 'button', class: 'tile tile-all', onclick: () => go({ name: 'all' }) },
-        el('span', { class: 'tile-icon' }, icon('stack')),
-        el('span', { class: 'tile-name', text: 'Alle Dokumente' }),
-        el('span', { class: 'tile-meta', text: docs.length === 1 ? '1 Dokument' : `${docs.length} Dokumente` })
-      ),
-      ...roots.map(folderTile),
-      newTile('Neuer Ablageort', async () => {
-        const name = prompt('Name des neuen Ablageorts (z. B. „Krankenakte“):');
-        if (name && name.trim()) {
-          await createFolder(ctx.getKey(), name);
-          toast(`Ablageort „${name.trim()}“ angelegt`);
-        }
-      })
-    ),
-    docs.length ? '' : el('p', { class: 'hint center', text: 'Noch keine Dokumente abgelegt. Scanne dein erstes Dokument unter „Scannen“.' })
-  );
+  const addFolder = async () => {
+    const name = prompt('Name des neuen Ablageorts (z. B. „Krankenakte“):');
+    if (name && name.trim()) {
+      await createFolder(ctx.getKey(), name);
+      toast(`Ablageort „${name.trim()}“ angelegt`);
+    }
+  };
+  const collections = Object.entries(COLLECTIONS).map(([id, c]) =>
+    el('button', { type: 'button', class: `collection ${c.cls}`, onclick: () => go({ name: 'collection', id }) },
+      icon(c.icon),
+      el('span', {},
+        el('span', { class: 'collection-count', text: String(collectionDocs(id).length) }),
+        el('span', { class: 'collection-label', text: c.label })
+      )
+    ));
 
-  show(dupBanner(), queueChip(), searchBox, recent, filters, results, folderList);
-  filters.hidden = !query.trim();
-  showRecent();
-  if (query) update();
+  show(
+    el('div', { class: 'f-head' },
+      el('h1', { class: 'f-title f-grow', text: 'Ablage' }),
+      el('button', { type: 'button', class: 'f-icon-btn is-primary', 'aria-label': 'Neuer Ablageort', onclick: addFolder }, icon('plus'))
+    ),
+    el('button', { type: 'button', class: 'search-field', onclick: () => ctx.openSearch() }, icon('search'), 'Titel, Text, Absender, Datum'),
+    dupBanner(),
+    queueChip(),
+    backupReminder(),
+    el('div', { class: 'f-block' },
+      el('h2', { class: 'f-overline', text: 'Automatische Sammlungen' }),
+      el('div', { class: 'collections' }, collections)
+    ),
+    el('div', { class: 'f-block' },
+      el('h2', { class: 'f-overline', text: 'Ablageorte' }),
+      el('div', { class: 'tile-grid' },
+        el('button', { type: 'button', class: 'tile f-tile', onclick: () => go({ name: 'all' }) },
+          el('span', { class: 'tile-icon', style: { background: 'var(--f-primary)', color: '#fff' } }, icon('stack')),
+          el('span', { class: 'tile-name', text: 'Alle Dokumente' }),
+          el('span', { class: 'tile-meta', text: docs.length === 1 ? '1 Dokument' : `${docs.length} Dokumente` })
+        ),
+        ...roots.map(folderTile),
+        newTile('Neuer Ablageort', addFolder)
+      )
+    ),
+    docs.length ? null : el('p', { class: 'hint center', text: 'Noch keine Dokumente abgelegt. Tippe unten auf den Scan-Knopf.' })
+  );
+}
+
+function renderCollection(id) {
+  const c = COLLECTIONS[id];
+  const list = collectionDocs(id);
+  const empty = {
+    soon: 'Keine offenen Fristen. Erkennt Folio beim Scannen eine Frist, kannst du sie als Erinnerung übernehmen.',
+    year: 'Aus diesem Jahr gibt es noch keine Dokumente.',
+    contracts: 'Noch keine Verträge erkannt. Dazu zählen Dokumente mit Kündigungs- oder Ablauffrist oder mit „Vertrag“, „Police“ oder „Versicherungsschein“ im Text.'
+  }[id];
+  show(
+    backButton('Ablage', { name: 'root' }),
+    el('h2', { class: 'view-title', text: c.label }),
+    list.length
+      ? el('div', { class: 'doc-grid' }, list.map((d) => docCard(d, true, { name: 'collection', id })))
+      : el('p', { class: 'hint center', text: empty })
+  );
 }
 
 function flatFolders() {
@@ -353,35 +382,6 @@ function flatFolders() {
   };
   walk(null, 0);
   return out;
-}
-
-function buildFilter() {
-  const f = {};
-  if (searchFilter.folder) f.folderIds = new Set(descendantIds(searchFilter.folder));
-  const p = searchFilter.period;
-  const iso = (d) => d.toISOString().slice(0, 10);
-  if (p === '30' || p === '365') f.from = iso(new Date(Date.now() - Number(p) * 86400000));
-  else if (p && p.startsWith('y')) { f.from = `${p.slice(1)}-01-01`; f.to = `${p.slice(1)}-12-31`; }
-  else if (p === 'older') f.to = `${new Date().getFullYear() - 2}-12-31`;
-  return f;
-}
-
-/** Ein Suchtreffer mit Vorschaubild, Ordner und Textausschnitt. */
-function searchRow(hit) {
-  const { doc, snippet } = hit;
-  return el('button', { type: 'button', class: 'doc-row search-hit', onclick: () => {
-    rememberSearch(ctx.getKey(), query);
-    go({ name: 'detail', id: doc.id, back: { name: 'root' }, page: hit.page, terms: hit.terms });
-  } },
-    el('span', { class: 'thumb-box' }, thumbImg(doc)),
-    el('span', { class: 'doc-text' },
-      el('span', { class: 'doc-title', text: doc.meta.title }),
-      el('span', { class: 'doc-sub', text: [folderLabel(existingFolderId(doc.meta.category)), formatDate(doc.meta.date)].join(' · ') }),
-      snippet ? el('span', { class: 'snippet' }, snippet.before, el('mark', { text: snippet.hit }), snippet.after,
-        doc.meta.pageCount > 1 ? el('span', { class: 'snippet-page', text: ` · Seite ${hit.page + 1}` }) : null) : null
-    ),
-    icon('right', 'icon chevron-icon')
-  );
 }
 
 /** Hinweis „Mögliche Duplikate gefunden“ – antippen öffnet die Prüfung. */
@@ -562,29 +562,48 @@ function renderDetail(id) {
   if (!doc) return renderRoot();
   const folderId = existingFolderId(doc.meta.category);
   const back = view.back || { name: 'folder', id: folderId };
-
-  const pagesBox = el('div', { class: 'pages' }, el('p', { class: 'hint center', text: 'Seiten werden entschlüsselt …' }));
-  const shareBtn = actionButton('share', 'PDF teilen', () => share(doc));
-  shareBtn.disabled = true;
-  let pageBlobs = [];
-
   const target = view.page || 0;
   const terms = view.terms || null;
+  const count = doc.meta.pageCount;
+
+  // ---------- Kopf: Zurück · Titel · Teilen ----------
+  const subtitle = el('div', { class: 'doc-head-sub', text: `${folderById(folderId)?.name || ''} · Seite ${target + 1} von ${count}` });
+  const shareBtn = el('button', { type: 'button', class: 'f-icon-btn', 'aria-label': 'Als PDF teilen', disabled: true, onclick: () => share(doc) }, icon('share'));
+  const head = el('div', { class: 'doc-head' },
+    el('button', { type: 'button', class: 'f-icon-btn', 'aria-label': `Zurück zu ${viewLabel(back)}`, onclick: () => (back.name === 'search' ? ctx.openSearch() : go(back)) }, icon('back')),
+    el('div', { class: 'doc-head-text' }, el('div', { class: 'doc-head-title', text: doc.meta.title }), subtitle),
+    shareBtn
+  );
+
+  // ---------- Seiten zum Wischen mit Punkten ----------
+  const scroller = el('div', { class: 'doc-pages', 'aria-label': 'Seiten' }, el('p', { class: 'hint center doc-loading', text: 'Seiten werden entschlüsselt …' }));
+  const dots = el('div', { class: 'doc-dots', 'aria-hidden': 'true' },
+    ...Array.from({ length: count }, (_, i) => el('span', { class: i === target ? 'is-active' : '' })));
+  const setPage = (i) => {
+    subtitle.textContent = `${folderById(folderId)?.name || ''} · Seite ${i + 1} von ${count}`;
+    [...dots.children].forEach((d, k) => d.classList.toggle('is-active', k === i));
+  };
+  scroller.addEventListener('scroll', () => {
+    const i = Math.round(scroller.scrollLeft / Math.max(1, scroller.clientWidth));
+    setPage(Math.min(count - 1, Math.max(0, i)));
+  }, { passive: true });
+
   loadPages(key, doc).then(async (blobs) => {
     if (myRender !== renderId) return;
-    pageBlobs = blobs;
     const wraps = blobs.map((blob, i) =>
-      el('div', { class: 'page-wrap', id: `page-${i}` },
-        el('img', { class: 'page-img', src: trackUrl(blob), alt: `Seite ${i + 1} von ${blobs.length}` }))
+      el('div', { class: 'doc-page' },
+        el('div', { class: 'page-wrap', id: `page-${i}` },
+          el('img', { class: 'page-img', src: trackUrl(blob), alt: `Seite ${i + 1} von ${blobs.length}` })))
     );
-    pagesBox.replaceChildren(...wraps);
-    // Von der Suche gekommen: zur richtigen Seite springen und das Wort markieren
+    scroller.replaceChildren(...wraps);
     if (terms) {
-      highlightWords(doc, target, terms, wraps[target], myRender);
-      setTimeout(() => wraps[target] && wraps[target].scrollIntoView({ block: 'start', behavior: 'smooth' }), 150);
+      const word = terms.find((t) => t.length >= 3 && !/^dt\d|^\d+d\d\d$/.test(t));
+      highlightWords(doc, target, terms, wraps[target].firstChild, myRender);
+      if (word) wraps[target].append(el('span', { class: 'hit-chip', text: `Treffer: ${word}` }));
     }
+    requestAnimationFrame(() => { scroller.scrollLeft = target * scroller.clientWidth; });
+    setTimeout(() => { scroller.scrollLeft = target * scroller.clientWidth; }, 60);
     // PDF gleich vorbereiten – das iPhone öffnet „Teilen“ nur direkt nach dem Antippen.
-    // Importierte PDFs werden unverändert im Original geteilt.
     let pdf = null;
     if (doc.meta.source === 'import') {
       const original = await loadOriginal(key, doc).catch(() => null);
@@ -596,42 +615,84 @@ function renderDetail(id) {
     shareBtn.disabled = false;
   }).catch((err) => {
     console.error(err);
-    if (myRender === renderId) pagesBox.replaceChildren(el('p', { class: 'error', text: 'Seiten konnten nicht geladen werden.' }));
+    if (myRender === renderId) scroller.replaceChildren(el('p', { class: 'error', text: 'Seiten konnten nicht geladen werden.' }));
   });
+
+  // ---------- Bottom Sheet: Chips, Felder, Aktionen ----------
+  const r = reminderOf(doc.meta);
+  const chips = el('div', { class: 'sheet-chips' },
+    folderChip(folderId),
+    r ? el('span', { class: `f-chip ${r.done ? 'is-ok' : (daysUntilSafe(r.date) <= 3 ? 'is-danger' : 'is-warn')}`, text: r.done ? `${r.kind}: erledigt` : `${r.kind} bis ${formatDate(r.date).slice(0, 6)}` }) : null,
+    doc.meta.source === 'import' && doc.meta.fileName && /\.pdf$/i.test(doc.meta.fileName) ? el('span', { class: 'f-chip', text: 'Original-PDF' }) : null
+  );
+  const amount = amountOf(doc);
+  const field = (label, value) => el('div', { class: 'sheet-row' }, el('span', { class: 'f-row-label', text: label }), el('span', { class: 'f-row-value', text: value }));
+  const fields = el('div', { class: 'sheet-fields' },
+    doc.meta.sender ? field('Absender', doc.meta.sender) : null,
+    field('Datum', formatDate(doc.meta.date)),
+    amount !== null ? field('Betrag', `${amount.toFixed(2).replace('.', ',')} €`) : null,
+    field('Seiten', String(count))
+  );
+
+  // Verschieben: native Ordnerauswahl über dem Knopf (gewohnte iPhone-Auswahl)
+  const moveSelect = el('select', { 'aria-label': 'In anderen Ablageort verschieben' });
+  fillFolderSelect(moveSelect, folderId);
+  moveSelect.addEventListener('change', async () => {
+    const to = moveSelect.value;
+    if (to === folderId) return;
+    doc.meta = await updateMeta(key, doc, { category: to });
+    toast(`Verschoben nach ${folderById(to)?.name || 'Ablage'}`, 'ok', {
+      label: 'Rückgängig',
+      onClick: async () => { doc.meta = await updateMeta(ctx.getKey(), doc, { category: folderId }); render(); }
+    });
+    render();
+  });
+
+  const reminderBtn = el('button', { type: 'button', class: 'f-btn is-small', onclick: () => {
+    if (r) { document.getElementById('due-slot')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    renderEdit(doc, { date: '', kind: 'Zahlung', amount: amount !== null ? `${amount.toFixed(2).replace('.', ',')} €` : null, lead: [1, 0] });
+    document.getElementById('edit-slot')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } }, icon('calendar2'), 'Erinnerung');
 
   const pageTextList = getPageTextsFor(doc.id);
   const withText = hasText(doc.id);
-  const queued = queueState().pending > 0;
-  const ocrBtn = !withText && ctx.isOcrEnabled()
-    ? el('button', { type: 'button', class: 'btn-text with-icon', onclick: async (e) => {
+  const more = el('div', { class: 'f-card is-list doc-more' },
+    el('button', { type: 'button', class: 'f-row', onclick: () => renderEdit(doc) }, el('span', { class: 'f-row-icon' }, icon('edit')), el('span', { class: 'f-grow f-row-title', text: 'Bearbeiten' }), icon('right', 'icon chevron-icon')),
+    !withText && ctx.isOcrEnabled() ? el('button', { type: 'button', class: 'f-row', onclick: async (e) => {
       e.currentTarget.disabled = true;
-      e.currentTarget.textContent = 'Vorgemerkt – Text wird im Hintergrund erkannt';
-      await ctx.enqueueOcr(doc.id, Array.from({ length: doc.meta.pageCount }, (_, i) => i));
-    } }, icon('text'), queued ? 'Text erkennen (wird vorgemerkt)' : 'Text erkennen (für die Suche)')
-    : null;
+      e.currentTarget.querySelector('.f-row-title').textContent = 'Vorgemerkt – Text wird im Hintergrund erkannt';
+      await ctx.enqueueOcr(doc.id, Array.from({ length: count }, (_, i) => i));
+    } }, el('span', { class: 'f-row-icon' }, icon('text')), el('span', { class: 'f-grow f-row-title', text: 'Text erkennen (für die Suche)' })) : null,
+    el('button', { type: 'button', class: 'f-row danger-row', onclick: () => remove(doc, back) }, el('span', { class: 'f-row-icon is-danger' }, icon('trash')), el('span', { class: 'f-grow f-row-title', text: 'In den Papierkorb' }))
+  );
 
-  show(
-    backButton(viewLabel(back), back),
-    el('h2', { class: 'view-title', text: doc.meta.title }),
-    el('p', { class: 'doc-info' },
-      dot(folderId), ` ${folderLabel(folderId)} · ${formatDate(doc.meta.date)} · ${pagesText(doc.meta.pageCount)}`
+  const sheet = el('div', { class: 'f-sheet doc-sheet' },
+    el('div', { class: 'f-sheet-handle', 'aria-hidden': 'true' }),
+    chips,
+    fields,
+    el('div', { class: 'sheet-actions' },
+      reminderBtn,
+      el('label', { class: 'f-btn-secondary move-btn' }, icon('folder'), 'Verschieben', moveSelect)
     ),
+    el('div', { id: 'due-slot' }, r ? dueBox(doc) : (doc.meta.reminderSuggestion ? reminderSuggestionBox(doc) : null)),
     doc.meta.note ? el('p', { class: 'doc-note', text: doc.meta.note }) : null,
-    reminderOf(doc.meta) ? dueBox(doc) : (doc.meta.reminderSuggestion ? reminderSuggestionBox(doc) : null),
-    el('div', { class: 'action-bar' },
-      actionButton('edit', 'Bearbeiten', () => renderEdit(doc)),
-      shareBtn,
-      actionButton('trash', 'Löschen', () => remove(doc, back), 'danger')
-    ),
     el('div', { id: 'edit-slot' }),
-    pagesBox,
+    more,
     withText
       ? el('details', { class: 'ocr-text' }, el('summary', { text: 'Erkannter Text' }),
         ...pageTextList.map((t, i) => el('div', {},
           pageTextList.length > 1 ? el('h4', { class: 'ocr-page', text: `Seite ${i + 1}` }) : null,
           el('pre', { text: t || '(noch kein Text)' }))))
-      : ocrBtn
+      : null
   );
+
+  show(el('div', { class: 'doc-view' }, head, scroller, count > 1 ? dots : null, sheet));
+}
+
+function daysUntilSafe(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((new Date(y, m - 1, d) - today) / 86400000);
 }
 
 function dueBox(doc) {
@@ -805,4 +866,199 @@ async function remove(doc, back) {
     console.error(err);
     alert('Löschen fehlgeschlagen.');
   }
+}
+
+// =====================================================================
+// Bildschirm „Suche“ (05)
+// =====================================================================
+let searchState = { query: '', folder: '', period: '', amount: '' };
+let searchUrls = [];
+
+/** Betrag eines Dokuments (aus Angaben, Erinnerung oder erkanntem Text) */
+function amountOf(doc) {
+  const raw = doc.meta.amount || (reminderOf(doc.meta) || {}).amount || (doc.meta.fp && doc.meta.fp.keys && doc.meta.fp.keys.amount);
+  if (!raw) return null;
+  const n = parseFloat(String(raw).replace(/[^\d,.-]/g, '').replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+
+function amountMatches(doc, range) {
+  if (!range) return true;
+  const a = amountOf(doc);
+  if (a === null) return false;
+  if (range === 'lt50') return a < 50;
+  if (range === '50to100') return a >= 50 && a <= 100;
+  if (range === 'gt100') return a > 100;
+  return true;
+}
+
+function searchFilter() {
+  const f = {};
+  if (searchState.folder) f.folderIds = new Set(descendantIds(searchState.folder));
+  const p = searchState.period;
+  const iso = (d) => d.toISOString().slice(0, 10);
+  if (p === '30' || p === '365') f.from = iso(new Date(Date.now() - Number(p) * 86400000));
+  else if (p && p.startsWith('y')) { f.from = `${p.slice(1)}-01-01`; f.to = `${p.slice(1)}-12-31`; }
+  else if (p === 'month') { const d = new Date(); f.from = iso(new Date(d.getFullYear(), d.getMonth(), 1)); f.to = iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)); }
+  return f;
+}
+
+function markText(text, terms) {
+  const folded = fold(text);
+  let best = -1;
+  let len = 0;
+  for (const t of terms) {
+    const i = folded.indexOf(t);
+    if (i !== -1 && (best === -1 || i < best)) { best = i; len = t.length; }
+  }
+  if (best === -1) return [text];
+  return [text.slice(0, best), el('mark', { text: text.slice(best, best + len) }), text.slice(best + len)];
+}
+
+function releaseSearchUrls() {
+  searchUrls.forEach((u) => URL.revokeObjectURL(u));
+  searchUrls = [];
+}
+
+export function clearSearchScreen() {
+  releaseSearchUrls();
+  searchState = { query: '', folder: '', period: '', amount: '' };
+  const box = document.getElementById('search-view');
+  if (box) box.replaceChildren();
+}
+
+export function renderSearchScreen({ focus = false } = {}) {
+  const box = document.getElementById('search-view');
+  if (!box || !ctx.getKey()) return;
+  const input = el('input', {
+    type: 'search', class: 'search-pill-input', placeholder: 'Suchen …', 'aria-label': 'Dokumente durchsuchen',
+    value: searchState.query, autocomplete: 'off', enterkeyhint: 'search'
+  });
+  const clear = el('button', { type: 'button', class: 'search-clear', 'aria-label': 'Suchbegriff löschen', onclick: () => { input.value = ''; update(); input.focus(); } }, icon('x'));
+  const pill = el('label', { class: 'search-pill' }, icon('search'), input, clear);
+  const cancel = el('button', { type: 'button', class: 'f-link search-cancel', text: 'Abbrechen', onclick: () => {
+    searchState = { query: '', folder: '', period: '', amount: '' };
+    renderSearchScreen();
+  } });
+
+  // Filter-Chips (native Auswahl, damit es auf dem iPhone die gewohnte Auswahlliste gibt)
+  const year = new Date().getFullYear();
+  const chipSelect = (label, key, options) => {
+    const sel = el('select', { 'aria-label': label }, el('option', { value: '', text: label }), ...options.map(([v, t]) => el('option', { value: v, text: t, selected: v === searchState[key] })));
+    sel.addEventListener('change', () => { searchState[key] = sel.value; update(); });
+    const chosen = options.find(([v]) => v === searchState[key]);
+    return el('label', { class: `f-filter${searchState[key] ? ' is-active' : ''}` }, chosen ? chosen[1] : label, icon('down'), sel);
+  };
+  const anyFilter = () => searchState.folder || searchState.period || searchState.amount;
+  const filters = el('div', { class: 'filter-row' },
+    el('button', { type: 'button', class: `f-filter${anyFilter() ? '' : ' is-active'}`, onclick: () => { Object.assign(searchState, { folder: '', period: '', amount: '' }); update(); } }, 'Alle'),
+    chipSelect('Ablageort', 'folder', flatFolders().map((f) => [f.id, f.label.trim()])),
+    chipSelect('Zeitraum', 'period', [['month', 'Dieser Monat'], ['30', 'Letzte 30 Tage'], ['365', 'Letzte 12 Monate'], [`y${year}`, String(year)], [`y${year - 1}`, String(year - 1)]]),
+    chipSelect('Betrag', 'amount', [['lt50', 'unter 50 €'], ['50to100', '50–100 €'], ['gt100', 'über 100 €']])
+  );
+  const results = el('div', { class: 'search-results' });
+
+  const update = () => {
+    searchState.query = input.value;
+    clear.hidden = !input.value;
+    releaseSearchUrls();
+    renderId++;
+    const q = searchState.query.trim();
+    let hits;
+    if (q) {
+      hits = runSearch(q, searchFilter()).filter((h) => amountMatches(h.doc, searchState.amount));
+    } else if (anyFilter()) {
+      const f = searchFilter();
+      hits = docs.filter((d) => (!f.folderIds || f.folderIds.has(existingFolderId(d.meta.category)))
+        && (!f.from || (d.meta.date || '') >= f.from) && (!f.to || (d.meta.date || '') <= f.to)
+        && amountMatches(d, searchState.amount)).map((doc) => ({ doc, page: 0, snippet: null, terms: [] }));
+    } else {
+      results.replaceChildren(...suggestionsBlock(input, update));
+      return;
+    }
+    results.replaceChildren(
+      el('p', { class: 'search-meta', text: `${hits.length === 1 ? '1 Treffer' : `${hits.length} Treffer`} · offline durchsucht` }),
+      ...(hits.length ? hits.slice(0, 60).map(searchCard) : [el('p', { class: 'hint center', text: 'Nichts gefunden. Tipp: weniger oder kürzere Wörter versuchen.' })])
+    );
+  };
+  input.addEventListener('input', update);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { input.blur(); rememberSearch(ctx.getKey(), input.value); } });
+  input.addEventListener('change', () => rememberSearch(ctx.getKey(), input.value));
+
+  box.replaceChildren(el('div', { class: 'search-top' }, pill, cancel), filters, results);
+  // Filter-Chips nach Änderung neu zeichnen (aktiver Zustand)
+  const rerenderFilters = () => renderSearchScreen();
+  filters.querySelectorAll('select').forEach((sel) => sel.addEventListener('change', rerenderFilters));
+  filters.querySelector('button').addEventListener('click', rerenderFilters);
+  update();
+  if (focus) setTimeout(() => input.focus(), 50);
+}
+
+/** Vorschläge – nur aus vorhandenen Daten */
+function suggestionsBlock(input, update) {
+  const out = [];
+  const recent = recentSearches();
+  if (recent.length) {
+    out.push(el('h2', { class: 'f-overline', text: 'Zuletzt gesucht' }),
+      el('div', { class: 'chip-row' }, recent.map((q) => el('button', { type: 'button', class: 'f-filter is-soft', text: q, onclick: () => { input.value = q; update(); } }))));
+  }
+  const year = new Date().getFullYear();
+  const sugg = [];
+  // Ordner mit den meisten Dokumenten in diesem Jahr
+  const counts = new Map();
+  for (const d of docs) if ((d.meta.date || '').startsWith(String(year))) {
+    const top = folderPath(existingFolderId(d.meta.category))[0];
+    if (top) counts.set(top.id, (counts.get(top.id) || 0) + 1);
+  }
+  const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (best) sugg.push({ text: `${folderById(best[0]).name} ${year}`, apply: () => Object.assign(searchState, { folder: best[0], period: `y${year}` }) });
+  if (docs.some((d) => (amountOf(d) || 0) > 100)) sugg.push({ text: 'über 100 €', apply: () => Object.assign(searchState, { amount: 'gt100' }) });
+  const month = new Date().toISOString().slice(0, 7);
+  if (openDeadlines(docs).some((d) => reminderOf(d.meta).date.startsWith(month))) sugg.push({ text: 'Frist diesen Monat', apply: () => { ctx.openCollectionSoon(); } });
+  if (sugg.length) {
+    out.push(el('h2', { class: 'f-overline', text: 'Vorschläge' }),
+      el('div', { class: 'chip-row' }, sugg.map((s) => el('button', { type: 'button', class: 'f-filter is-soft', text: s.text, onclick: () => { s.apply(); renderSearchScreen(); } }))));
+  }
+  if (!out.length) out.push(el('p', { class: 'hint center', text: 'Suche nach Titel, Absender, Betrag, Datum oder jedem Wort im Dokument.' }));
+  return out;
+}
+
+/** Ein Treffer als Karte: Vorschau, Titel (markiert), Titel/Text-Kennzeichen, Ausschnitt */
+function searchCard(hit) {
+  const { doc, snippet, terms } = hit;
+  const myRender = renderId;
+  const img = el('img', { alt: '' });
+  loadThumb(ctx.getKey(), doc).then((blob) => {
+    if (myRender !== renderId) return;
+    const url = URL.createObjectURL(blob);
+    searchUrls.push(url);
+    img.src = url;
+  }).catch(() => {});
+  const head = fold(`${doc.meta.title} ${doc.meta.sender || ''}`);
+  const inTitle = terms.some((t) => head.includes(t));
+  const sub = [doc.meta.sender, folderById(existingFolderId(doc.meta.category))?.name].filter(Boolean).join(' · ');
+  return el('button', { type: 'button', class: 'search-card', onclick: () => {
+    rememberSearch(ctx.getKey(), searchState.query);
+    ctx.openDocFromSearch(doc.id, hit.page, terms);
+  } },
+    el('span', { class: 'search-thumb' }, img),
+    el('span', { class: 'search-body' },
+      el('span', { class: 'search-title-row' },
+        el('span', { class: 'search-title' }, ...markText(doc.meta.title, terms)),
+        terms.length ? el('span', { class: `f-chip ${inTitle ? 'is-blue' : ''}`, text: inTitle ? 'Titel' : 'Text' }) : null
+      ),
+      sub ? el('span', { class: 'search-sub', text: sub }) : null,
+      snippet ? el('span', { class: 'search-snippet' }, snippet.before, el('mark', { text: snippet.hit }), snippet.after) : null,
+      el('span', { class: 'search-foot', text: [doc.meta.pageCount > 1 ? `Seite ${hit.page + 1}` : null, formatDate(doc.meta.date)].filter(Boolean).join(' · ') })
+    )
+  );
+}
+
+/** Dokument aus der Suche öffnen (springt zur Seite, markiert das Wort). */
+export function openDocFrom(id, page, terms) {
+  go({ name: 'detail', id, back: { name: 'search' }, page, terms });
+}
+
+export function openCollection(id) {
+  go({ name: 'collection', id });
 }

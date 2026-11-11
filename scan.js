@@ -1,7 +1,7 @@
 // Bildschirm „Scannen“: Fotos aufnehmen, Seiten sortieren/drehen,
 // Text erkennen, Vorschläge eintragen und verschlüsselt speichern.
 
-import { el, todayISO, formatDate, toast } from './dom.js';
+import { el, todayISO, formatDate, formatBytes, toast } from './dom.js';
 import { icon } from './icons.js';
 import { prepareImage, renderPage, makeThumb, loadImage } from './images.js';
 import { saveDocument } from './docs.js';
@@ -12,7 +12,8 @@ import { recognizePage } from './ocr.js';
 import { detectDocument, warpImage, fullQuad } from './crop.js';
 import { openCropper } from './cropper.js';
 import { suggestFromText } from './suggest.js';
-import { reminderFields, suggestionCard, reminderChanges } from './deadlines.js';
+import { reminderFields, reminderChanges } from './deadlines.js';
+import { imagesToPdf } from './makepdf.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -28,7 +29,7 @@ let dirty = {};      // Felder, die du selbst geändert hast, werden nicht über
 let suggestion = null;
 let lastFolderId = 'invoice';
 
-const FIELDS = { category: 'doc-category', title: 'doc-title', date: 'doc-date', note: 'doc-note' };
+const FIELDS = { category: 'doc-category', title: 'doc-title', date: 'doc-date', note: 'doc-note', amount: 'doc-amount' };
 let reminder = null;          // Eingabefelder der Erinnerung
 let reminderDismissed = false; // Vorschlag abgelehnt
 
@@ -45,7 +46,11 @@ export function initScan(context) {
   };
   $('scan-camera').addEventListener('click', pick('input-camera'));
   $('scan-library').addEventListener('click', pick('input-library'));
-  $('scan-add-camera').addEventListener('click', pick('input-camera'));
+  // Weitere Seite: eigene Live-Kamera, sonst die iPhone-Kamera
+  $('scan-add-camera').addEventListener('click', () => {
+    if (busy) return;
+    if (ctx.openCamera) ctx.openCamera(); else pick('input-camera')();
+  });
   $('scan-add-library').addEventListener('click', pick('input-library'));
 
   ['input-camera', 'input-library'].forEach((id) => {
@@ -63,6 +68,7 @@ export function initScan(context) {
   for (const [name, id] of Object.entries(FIELDS)) {
     $(id).addEventListener('input', () => { dirty[name] = true; unmark(name); });
   }
+  $('doc-title').addEventListener('input', renderSummary);
 
   const select = $('doc-category');
   select.addEventListener('change', async () => {
@@ -81,6 +87,7 @@ export function initScan(context) {
 
   $('scan-filter').addEventListener('change', render);
   $('scan-form').addEventListener('submit', onSave);
+  $('scan-later').addEventListener('click', onLater);
   $('scan-discard').addEventListener('click', () => {
     if (confirm('Diesen Scan verwerfen? Die Fotos werden gelöscht.')) clearScan();
   });
@@ -89,6 +96,22 @@ export function initScan(context) {
 function setStatus(text) {
   $('scan-status').textContent = text;
 }
+
+// Fotos aus der Live-Kamera kommen einzeln und schnell hintereinander –
+// sie werden der Reihe nach eingelesen.
+let captureChain = Promise.resolve();
+export function addCapturedFile(file) {
+  const myDraft = draftId;
+  preparingQueued++;
+  render();
+  captureChain = captureChain.then(async () => {
+    preparingQueued--;
+    if (myDraft !== draftId) return;
+    await addFiles([file]);
+  }).catch((err) => console.error(err));
+  return captureChain;
+}
+let preparingQueued = 0;
 
 async function addFiles(files) {
   busy = true;
@@ -134,9 +157,11 @@ async function addFiles(files) {
 // Seiten anzeigen
 // ---------------------------------------------------------------------
 function render() {
-  const hasPages = pages.length > 0 || preparing > 0;
+  const waiting = preparing + preparingQueued;
+  const hasPages = pages.length > 0 || waiting > 0;
   $('scan-empty').hidden = hasPages;
   $('scan-draft').hidden = !hasPages;
+  if (ctx.onDraftChange) ctx.onDraftChange(hasPages);
 
   const filter = $('scan-filter').checked;
   $('scan-pages').replaceChildren(...pages.map((page, i) => el('figure', { class: 'page-tile' },
@@ -159,13 +184,29 @@ function render() {
     )
   )));
   // Platzhalter für Bilder, die gerade eingelesen werden
-  for (let i = 0; i < preparing; i++) {
+  for (let i = 0; i < waiting; i++) {
     $('scan-pages').append(el('figure', { class: 'page-tile' },
       el('div', { class: 'page-frame scanning' }, el('span', { class: 'scan-label', text: 'Wird eingelesen …' })),
       el('figcaption', {}, el('span', { text: 'Neue Seite' }))));
   }
-  $('scan-count').textContent = pages.length === 1 ? '1 Seite' : `${pages.length} Seiten`;
+  renderSummary();
   renderOcrStatus();
+}
+
+// Kopfkarte: Vorschau, Titel, Seitenzahl und Größe
+let summaryUrl = null;
+function renderSummary() {
+  const n = pages.length;
+  const size = pages.reduce((sum, p) => sum + (p.blob ? p.blob.size : 0), 0);
+  $('scan-count').textContent = [n === 1 ? '1 Seite' : `${n} Seiten`, size ? formatBytes(size) : null].filter(Boolean).join(' · ');
+  $('scan-sum-title').textContent = $('doc-title').value.trim() || 'Neuer Scan';
+  const box = $('scan-thumb');
+  const first = pages[0];
+  box.classList.toggle('is-stack', n > 1);
+  if (!first) { box.replaceChildren(); summaryUrl = null; return; }
+  if (summaryUrl === first.url && box.firstChild) return;
+  summaryUrl = first.url;
+  box.replaceChildren(el('img', { src: first.url, alt: '', class: $('scan-filter').checked ? 'scan-filter' : '' }));
 }
 
 // Damit ein gedrehtes Bild genau in den Rahmen (Seitenverhältnis 3:4) passt
@@ -307,6 +348,8 @@ function updateScanMarks() {
 
 function renderOcrStatus() {
   updateScanMarks();
+  const chip = $('scan-text-chip');
+  chip.hidden = !(pages.length && pages.every((p) => p.ocr.status === 'done') && pages.some((p) => p.ocr.text.replace(/\s/g, '').length > 10));
   const box = $('ocr-status');
   box.className = 'ocr-status';
   if (!ctx.isOcrEnabled() || !pages.length) { box.hidden = true; box.replaceChildren(); return; }
@@ -345,7 +388,7 @@ function renderOcrStatus() {
   }));
 }
 
-function mark(name) { $(FIELDS[name]).closest('label').classList.add('suggested'); }
+function mark(name) { $(FIELDS[name]).closest('label').classList.add('suggested'); if (name === 'title') renderSummary(); }
 function unmark(name) { $(FIELDS[name]).closest('label').classList.remove('suggested'); }
 
 function applySuggestion() {
@@ -369,20 +412,42 @@ function applySuggestion() {
     $('doc-note').value = suggestion.note;
     mark('note');
   }
+  if (suggestion.amount && !dirty.amount) {
+    $('doc-amount').value = suggestion.amount;
+    mark('amount');
+  }
   // Erinnerung nur vorschlagen – gesetzt wird sie erst nach „Übernehmen“
   renderReminderSuggestion();
 }
 
+function dueText(kind, iso) {
+  const date = formatDate(iso);
+  const words = { Zahlung: 'zahlbar bis', 'Kündigung': 'kündbar bis', Widerspruch: 'Widerspruch bis', Ablauf: 'läuft ab am' };
+  return `${words[kind] || 'Frist bis'} ${date}`;
+}
+
+// „Frist erkannt“ + Schalter „Erinnerung 7 Tage vorher“ (aus, bis du ihn einschaltest)
 function renderReminderSuggestion() {
   const slot = $('reminder-suggestion-slot');
   const s = suggestion;
-  if (!s || !s.dueDate || reminderDismissed || reminder.isActive()) { slot.replaceChildren(); return; }
-  const proposal = { date: s.dueDate, kind: s.dueKind || 'Zahlung', amount: s.amount || null, lead: [1, 0] };
-  slot.replaceChildren(suggestionCard(proposal, {
-    onAccept: () => { reminder.set(proposal); slot.replaceChildren(); },
-    onEdit: () => { reminder.set(proposal); slot.replaceChildren(); reminder.node.querySelector('input[type=date]').focus(); },
-    onDismiss: () => { reminderDismissed = true; slot.replaceChildren(); }
-  }));
+  const row = $('scan-due-row');
+  if (!s || !s.dueDate) { row.hidden = true; slot.replaceChildren(); return; }
+  const kind = s.dueKind || 'Zahlung';
+  row.hidden = false;
+  $('scan-due-text').textContent = dueText(kind, s.dueDate);
+  if (reminderDismissed) { slot.replaceChildren(); return; }
+  const proposal = { date: s.dueDate, kind, amount: s.amount || null, lead: [7, 1, 0] };
+  const current = reminder.read();
+  const toggle = el('input', { type: 'checkbox', class: 'f-switch', 'aria-label': 'Erinnerung 7 Tage vorher' });
+  toggle.checked = Boolean(current && current.date === proposal.date);
+  toggle.addEventListener('change', () => reminder.set(toggle.checked ? proposal : null));
+  slot.replaceChildren(el('label', { class: 'f-card erk-switch' },
+    el('span', { class: 'f-grow' },
+      el('span', { class: 'f-row-title', text: 'Erinnerung 7 Tage vorher' }),
+      el('span', { class: 'f-row-sub', text: 'Unter „Heute“ · Kalender-Datei mit neutralem Titel' })
+    ),
+    toggle
+  ));
 }
 
 // ---------------------------------------------------------------------
@@ -404,6 +469,7 @@ async function onSave(event) {
     const date = $('doc-date').value || todayISO();
     const title = $('doc-title').value.trim() || `${folderSingular(category)} ${formatDate(date)}`;
     const note = $('doc-note').value.trim();
+    const amount = $('doc-amount').value.trim() || null;
     // Fertig erkannte Seiten gleich mitspeichern, die übrigen erledigt die Warteschlange
     const texts = pages.map((p) => (p.ocr.status === 'done' ? { text: p.ocr.text, words: p.ocr.words, w: p.ocr.w, h: p.ocr.h } : null));
     const sender = suggestion && suggestion.sender ? suggestion.sender : null;
@@ -414,7 +480,7 @@ async function onSave(event) {
     const finished = [];
     for (const page of pages) finished.push(await renderPage(page.blob, page.rotation, filter));
     const thumb = await makeThumb(finished[0]);
-    const meta = { title, category, date, note, sender, ...reminderChanges(confirmedReminder) };
+    const meta = { title, category, date, note, sender, ...(amount ? { amount } : {}), ...reminderChanges(confirmedReminder) };
     const missing = texts.map((t, i) => (t ? null : i)).filter((i) => i !== null);
     const doSave = async (extraMeta = {}) => {
       const id = await saveDocument(key, { ...meta, ...extraMeta }, finished, thumb, { texts });
@@ -461,9 +527,42 @@ async function onSave(event) {
   } finally {
     busy = false;
     button.disabled = false;
-    button.textContent = 'Verschlüsselt speichern';
+    button.textContent = 'Ablegen';
   }
 }
+
+// „Später sortieren“: Seiten unsortiert in den Eingang legen (verschlüsselt).
+// Eine Seite als Bild, mehrere Seiten als ein PDF. Einsortieren später unter „Heute“.
+async function onLater() {
+  if (busy || !pages.length || !ctx.sendToInbox) return;
+  const button = $('scan-later');
+  busy = true;
+  button.disabled = true;
+  button.textContent = 'Wird in den Eingang gelegt …';
+  try {
+    const filter = $('scan-filter').checked;
+    const finished = [];
+    for (const page of pages) finished.push(await renderPage(page.blob, page.rotation, filter));
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '-');
+    const name = `Scan ${stamp}`;
+    const file = finished.length === 1
+      ? new File([finished[0]], `${name}.jpg`, { type: 'image/jpeg' })
+      : new File([await imagesToPdf(finished, name)], `${name}.pdf`, { type: 'application/pdf' });
+    busy = false;
+    clearScan();
+    await ctx.sendToInbox(file);
+  } catch (err) {
+    console.error(err);
+    $('scan-error').textContent = 'Konnte nicht in den Eingang gelegt werden.';
+  } finally {
+    busy = false;
+    button.disabled = false;
+    button.textContent = 'Später sortieren';
+  }
+}
+
+/** Gibt es einen Scan, der noch nicht abgelegt ist? */
+export const hasDraft = () => pages.length > 0;
 
 /** Entwurf leeren (auch beim Sperren, damit keine Fotos im Speicher bleiben). */
 export function clearScan() {
@@ -483,6 +582,8 @@ export function clearScan() {
   if (allFolders().length) fillFolderSelect($('doc-category'), existingFolderId(lastFolderId), { allowNew: true });
   $('scan-filter').checked = true;
   $('scan-error').textContent = '';
+  $('scan-due-row').hidden = true;
+  summaryUrl = null;
   setStatus('');
   render();
 }

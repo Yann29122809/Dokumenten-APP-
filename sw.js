@@ -2,7 +2,7 @@
 
 // Bei jeder Änderung an den Dateien diese Nummer erhöhen,
 // damit Handys die neue Version laden.
-const CACHE_NAME = 'dokumente-v15';
+const CACHE_NAME = 'dokumente-v22';
 
 // Die großen Dateien der Texterkennung liegen in einem eigenen Speicher.
 // Er bleibt bei App-Updates erhalten, damit sie nicht jedes Mal neu
@@ -31,6 +31,9 @@ const APP_FILES = [
   './',
   './index.html',
   './styles.css',
+  './folio.css',
+  './today.js',
+  './livescan.js',
   './app.js',
   './crypto.js',
   './db.js',
@@ -59,10 +62,21 @@ const APP_FILES = [
   './dupcheck.js',
   './dupreview.js',
   './manifest.json',
-  './icon.svg',
+  './folio-logo.svg',
+  './favicon-32.png',
+  './icon-120.png',
+  './icon-152.png',
+  './icon-167.png',
   './icon-192.png',
   './icon-512.png',
-  './apple-touch-icon.png'
+  './icon-maskable-192.png',
+  './icon-maskable-512.png',
+  './apple-touch-icon-180.png',
+  './manrope-latin-400-normal.woff2',
+  './manrope-latin-500-normal.woff2',
+  './manrope-latin-600-normal.woff2',
+  './manrope-latin-700-normal.woff2',
+  './manrope-latin-800-normal.woff2'
 ];
 
 // Installation: Dateien in den Offline-Speicher legen

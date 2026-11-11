@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Dokumente</title>
-  <meta name="description" content="Private Dokumente scannen und lokal verschlüsselt ablegen.">
+  <title>Folio</title>
+  <meta name="description" content="Folio – private Dokumente scannen und lokal verschlüsselt ablegen.">
 
   <!-- Sicherheit: nur eigene Dateien laden, keine externen Server -->
   <meta http-equiv="Content-Security-Policy"
@@ -13,30 +13,35 @@
 
   <!-- PWA -->
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#6b4eff">
+  <meta name="theme-color" content="#F4F3FA">
 
   <!-- iPhone / iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Dokumente">
-  <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <meta name="apple-mobile-web-app-title" content="Folio">
+  <link rel="apple-touch-icon" href="apple-touch-icon-180.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-180.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="icon-167.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="icon-152.png">
+  <link rel="apple-touch-icon" sizes="120x120" href="icon-120.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="folio.css">
 </head>
 <body class="locked">
   <!-- ================= Sperrbildschirm ================= -->
   <div id="lock" class="lock">
-    <img class="lock-logo" src="icon.svg" alt="" width="72" height="72">
+    <img class="lock-logo" src="folio-logo.svg" alt="Folio" width="96" height="96">
 
     <!-- Wird beim Laden angezeigt -->
-    <p id="lock-loading" class="hint">Wird geladen …</p>
+    <p id="lock-loading" class="lock-sub">Wird geladen …</p>
 
     <!-- Ersteinrichtung -->
     <form id="setup-form" class="lock-form" hidden novalidate>
-      <h1>Willkommen</h1>
+      <h1>Willkommen bei Folio</h1>
       <ul class="intro-list">
         <li><span data-icon="lock"></span><span><strong>Verschlüsselt</strong> – nur mit deinem Passwort lesbar</span></li>
         <li><span data-icon="device"></span><span><strong>Nur auf diesem iPhone</strong> – keine Cloud, kein Konto</span></li>
@@ -59,18 +64,29 @@
       <button class="btn-primary" type="submit" id="setup-submit">Tresor anlegen</button>
     </form>
 
-    <!-- Entsperren -->
-    <form id="unlock-form" class="lock-form" hidden novalidate>
-      <h1>Gesperrt</h1>
-      <button class="btn-primary faceid-btn with-icon" type="button" id="faceid-unlock" data-icon="faceid" hidden>Mit Face ID entsperren</button>
-      <p class="error" id="faceid-error" role="alert"></p>
-      <p class="lock-text" id="unlock-text">Gib dein Passwort ein, um deine Dokumente zu öffnen.</p>
-      <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
-      <label>Passwort
-        <input type="password" id="unlock-password" autocomplete="current-password" required>
-      </label>
-      <p class="error" id="unlock-error" role="alert"></p>
-      <button class="btn-primary" type="submit" id="unlock-submit">Entsperren</button>
+    <!-- Entsperren (Bild 07) -->
+    <form id="unlock-form" class="lock-form unlock" hidden novalidate>
+      <h1>Folio ist gesperrt</h1>
+      <p class="lock-sub" id="unlock-text">Deine Dokumente sind verschlüsselt.</p>
+
+      <div class="faceid-block" id="faceid-block" hidden>
+        <button class="faceid-circle" type="button" id="faceid-unlock" aria-label="Mit Face ID entsperren" data-icon="faceid"></button>
+        <span class="faceid-label">Face ID verwenden</span>
+        <p class="error" id="faceid-error" role="alert"></p>
+      </div>
+
+      <div class="unlock-bottom">
+        <button class="lock-secondary" type="button" id="show-password" data-icon="lock" hidden>Mit Passwort entsperren</button>
+        <div class="password-panel" id="password-panel">
+          <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
+          <label>Passwort
+            <input type="password" id="unlock-password" autocomplete="current-password" required>
+          </label>
+          <p class="error" id="unlock-error" role="alert"></p>
+          <button class="f-btn" type="submit" id="unlock-submit">Entsperren</button>
+        </div>
+        <span class="lock-footnote">AES-256 · Schlüssel nur auf diesem Gerät</span>
+      </div>
     </form>
   </div>
 
@@ -92,34 +108,43 @@
     Neue Version verfügbar – tippen zum Aktualisieren
   </button>
 
-  <header class="app-header">
-    <h1 id="screen-title">Scannen</h1>
-  </header>
-
   <main class="app-main">
-    <!-- Bildschirm 1: Scannen -->
-    <section id="screen-scan" class="screen is-active" aria-labelledby="screen-title">
+    <!-- ============ Bildschirm: Heute ============ -->
+    <section id="screen-today" class="screen is-active" aria-label="Heute">
+      <div class="f-page">
+        <div class="f-head">
+          <img class="today-logo" src="folio-logo.svg" alt="" width="36" height="36">
+          <span class="brand f-grow">Folio</span>
+          <button class="f-icon-btn" type="button" id="lock-now-top" aria-label="Jetzt sperren" data-icon="lock"></button>
+        </div>
+        <div>
+          <div class="today-date" id="today-date"></div>
+          <h1 class="f-title" id="today-greeting">Hallo</h1>
+        </div>
+        <button type="button" class="f-card draft-banner" id="draft-banner" hidden>
+          <span class="f-row-icon" data-icon="scan"></span>
+          <span class="f-grow"><span class="f-row-title">Scan noch nicht abgelegt</span><span class="f-row-sub">Tippen, um weiterzumachen</span></span>
+          <span data-icon="right"></span>
+        </button>
+        <div id="today-hero"></div>
       <!-- Eingang: importierte Dateien, die noch bestätigt werden müssen -->
       <div id="inbox-section" class="inbox" hidden>
         <div class="inbox-title">
-          <h3 class="section-label">Eingang</h3>
+          <h2 class="f-section">Eingang</h2>
           <span class="hint" id="inbox-count"></span>
         </div>
         <div id="inbox-bulk" class="inbox-bulk"></div>
         <div id="inbox-list"></div>
       </div>
 
-      <!-- Noch keine Seite aufgenommen -->
-      <div id="scan-empty" class="scan-hero">
-        <div class="hero-card">
-          <span class="hero-icon" data-icon="scan"></span>
-          <h2>Dokument scannen</h2>
-          <p>Foto aufnehmen – die App schneidet zu, liest den Text und schlägt die Ablage vor.</p>
-          <button class="btn-primary btn-large with-icon" type="button" id="scan-camera" data-icon="camera">Foto aufnehmen</button>
-          <button class="btn-ghost with-icon" type="button" id="scan-library" data-icon="photos">Aus Fotos wählen</button>
-          <button class="btn-ghost with-icon" type="button" data-action="import" data-icon="file">Dateien importieren (PDF, Bilder)</button>
-        </div>
-        <details class="help-card card">
+        <div id="soon-section" hidden></div>
+        <div class="add-card f-card is-padded">
+          <div class="f-section-head"><h2 class="f-section f-grow">Hinzufügen</h2></div>
+          <div class="add-actions">
+            <button class="f-btn-secondary" type="button" id="scan-library" data-icon="photos">Aus Fotos</button>
+            <button class="f-btn-secondary" type="button" data-action="import" data-icon="file">Dateien</button>
+          </div>
+        <details class="help-card">
           <summary>So importierst du E-Mail-Anhänge</summary>
           <ol>
             <li>In der Mail-App den Anhang antippen und halten.</li>
@@ -128,50 +153,98 @@
           </ol>
           <p class="hint">Die Datei landet im Eingang. Dort prüfst du Titel, Ordner und Datum und bestätigst. Danach kannst du sie in „Dateien“ wieder löschen.</p>
         </details>
-        <div id="soon-section" hidden></div>
-        <h3 class="section-label">Tipps für gute Scans</h3>
-        <ul class="tips card">
-          <li><span data-icon="file"></span>Helles Papier auf dunklem Untergrund</li>
-          <li><span data-icon="sparkle"></span>Gutes Licht, ohne Schatten auf dem Blatt</li>
-          <li><span data-icon="stack"></span>Mehrere Seiten einfach nacheinander aufnehmen</li>
-        </ul>
+        </div>
+        <div id="today-recent"></div>
+      </div>
+    </section>
+
+    <!-- ============ Bildschirm: Erkannt (nach dem Scan) ============ -->
+    <section id="screen-scan" class="screen" aria-label="Erkannt" hidden>
+      <div class="f-page">
+        <div class="f-head">
+          <button class="f-icon-btn" type="button" id="scan-back" aria-label="Zurück" data-icon="back"></button>
+          <h1 class="f-page-title f-grow">Erkannt</h1>
+          <span class="f-chip is-ok" id="scan-text-chip" hidden data-icon="check">Text gelesen</span>
+        </div>
+      <!-- Noch keine Seite aufgenommen -->
+      <div id="scan-empty" class="scan-empty">
+        <p class="f-muted">Noch keine Seite aufgenommen.</p>
+        <button class="f-btn" type="button" id="scan-camera" data-icon="camera">Foto aufnehmen</button>
       </div>
 
       <!-- Entwurf mit aufgenommenen Seiten -->
-      <div id="scan-draft" hidden>
-        <div class="draft-head">
-          <strong id="scan-count">1 Seite</strong>
+      <div id="scan-draft" class="erk" hidden>
+        <div class="f-card erk-summary">
+          <span class="erk-thumbs" id="scan-thumb" aria-hidden="true"></span>
+          <span class="f-grow">
+            <span class="erk-title" id="scan-sum-title">Neuer Scan</span>
+            <span class="f-row-sub" id="scan-count">1 Seite</span>
+          </span>
         </div>
-        <div class="page-grid" id="scan-pages"></div>
-        <div class="button-row">
-          <button class="btn-secondary with-icon" type="button" id="scan-add-camera" data-icon="camera">Seite</button>
-          <button class="btn-secondary with-icon" type="button" id="scan-add-library" data-icon="photos">Aus Fotos</button>
-        </div>
-        <label class="check toggle-row">
-          <input type="checkbox" id="scan-filter" checked>
-          Scan-Filter (schwarz-weiß, kräftiger Kontrast)
-        </label>
 
         <div id="ocr-status" class="ocr-status" role="status" hidden></div>
 
-        <form id="scan-form" class="card form-card" novalidate>
-          <label>Ablageort
-            <select id="doc-category"></select>
-          </label>
-          <label>Titel
-            <input type="text" id="doc-title" maxlength="120" placeholder="z. B. Stromrechnung Oktober" autocomplete="off">
-          </label>
-          <label>Datum des Dokuments
-            <input type="date" id="doc-date">
-          </label>
-          <label>Notiz (optional)
-            <textarea id="doc-note" rows="2" maxlength="1000"></textarea>
-          </label>
+        <form id="scan-form" novalidate>
+          <div class="f-card is-list erk-fields">
+            <label class="erk-row">
+              <span class="f-row-icon" data-icon="folder"></span>
+              <span class="erk-label">Ablage</span>
+              <span class="erk-select"><select id="doc-category"></select></span>
+            </label>
+            <label class="erk-row">
+              <span class="f-row-icon" data-icon="edit"></span>
+              <span class="erk-label">Titel</span>
+              <input type="text" id="doc-title" maxlength="120" placeholder="z. B. Stromrechnung" autocomplete="off">
+            </label>
+            <label class="erk-row">
+              <span class="f-row-icon" data-icon="calendar2"></span>
+              <span class="erk-label">Datum</span>
+              <input type="date" id="doc-date">
+            </label>
+            <label class="erk-row">
+              <span class="f-row-icon" data-icon="euro"></span>
+              <span class="erk-label">Betrag</span>
+              <input type="text" id="doc-amount" inputmode="decimal" maxlength="30" placeholder="optional" autocomplete="off">
+            </label>
+            <div class="erk-row" id="scan-due-row" hidden>
+              <span class="f-row-icon is-warn" data-icon="bell"></span>
+              <span class="f-grow">
+                <span class="f-row-sub">Frist erkannt</span>
+                <span class="erk-due" id="scan-due-text"></span>
+              </span>
+            </div>
+          </div>
+
           <div id="reminder-suggestion-slot"></div>
-          <div id="reminder-slot"></div>
+
+          <details class="f-card erk-more">
+            <summary>Notiz und eigene Erinnerung</summary>
+            <label class="erk-note">Notiz (optional)
+              <textarea id="doc-note" rows="2" maxlength="1000"></textarea>
+            </label>
+            <div id="reminder-slot"></div>
+          </details>
+
+          <h2 class="f-section">Seiten</h2>
+          <div class="page-grid" id="scan-pages"></div>
+          <div class="erk-add">
+            <button class="f-btn-secondary is-small" type="button" id="scan-add-camera" data-icon="camera">Seite</button>
+            <button class="f-btn-secondary is-small" type="button" id="scan-add-library" data-icon="photos">Aus Fotos</button>
+          </div>
+          <label class="f-card erk-switch">
+            <span class="f-grow">
+              <span class="f-row-title">Scan-Filter</span>
+              <span class="f-row-sub">Schwarz-weiß, kräftiger Kontrast</span>
+            </span>
+            <input type="checkbox" class="f-switch" id="scan-filter" checked>
+          </label>
+
           <p class="error" id="scan-error" role="alert"></p>
-          <button class="btn-primary" type="submit" id="scan-save">Verschlüsselt speichern</button>
-          <button class="btn-text danger" type="button" id="scan-discard">Verwerfen</button>
+          <div class="erk-actions">
+            <button class="f-btn" type="submit" id="scan-save">Ablegen</button>
+            <button class="f-btn-text" type="button" id="scan-later">Später sortieren</button>
+            <button class="f-btn-text erk-discard" type="button" id="scan-discard">Verwerfen</button>
+          </div>
         </form>
       </div>
 
@@ -180,20 +253,30 @@
       <input class="sr-only" type="file" id="input-camera" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
       <input class="sr-only" type="file" id="input-library" accept="image/*" multiple tabindex="-1" aria-hidden="true">
       <input class="sr-only" type="file" id="input-import" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple tabindex="-1" aria-hidden="true">
+      </div>
     </section>
 
     <!-- Bildschirm 2: Ablage -->
-    <section id="screen-archive" class="screen" aria-labelledby="screen-title" hidden>
-      <div id="archive-view"></div>
+    <section id="screen-archive" class="screen" aria-label="Ablage" hidden>
+      <div class="f-page">
+        <div id="archive-view"></div>
+      </div>
+    </section>
+
+    <!-- ============ Bildschirm: Suche ============ -->
+    <section id="screen-search" class="screen" aria-label="Suche" hidden>
+      <div class="f-page" id="search-view"></div>
     </section>
 
     <!-- Bildschirm 3: Einstellungen -->
-    <section id="screen-settings" class="screen" aria-labelledby="screen-title" hidden>
+    <section id="screen-settings" class="screen" aria-label="Mehr" hidden>
+      <div class="f-page settings-page">
+      <div class="f-head"><h1 class="f-title f-grow">Mehr</h1></div>
       <div class="settings-group">
         <h2>Sicherheit</h2>
         <div class="card">
           <div class="settings-row">
-            <span>Face ID</span>
+            <span class="f-row-icon" data-icon="faceid"></span><span>Face ID</span>
             <span class="hint" id="faceid-status">–</span>
           </div>
           <button class="settings-row" type="button" id="faceid-toggle" hidden>
@@ -209,10 +292,10 @@
             <button class="btn-primary" type="submit" id="faceid-submit">Face ID einrichten</button>
           </form>
           <button class="settings-row" type="button" id="lock-now">
-            <span>Jetzt sperren</span><span class="chevron" aria-hidden="true">›</span>
+            <span class="f-row-icon" data-icon="lock"></span><span>Jetzt sperren</span><span class="chevron" aria-hidden="true">›</span>
           </button>
           <label class="settings-row">
-            <span>Automatisch sperren</span>
+            <span class="f-row-icon" data-icon="clock"></span><span>Automatisch sperren</span>
             <select id="autolock-select">
               <option value="0">Sofort beim Verlassen</option>
               <option value="1">Nach 1 Minute</option>
@@ -221,7 +304,7 @@
             </select>
           </label>
           <button class="settings-row" type="button" id="change-pw-toggle" aria-expanded="false" aria-controls="change-pw-form">
-            <span>Passwort ändern</span><span class="chevron" aria-hidden="true">›</span>
+            <span class="f-row-icon" data-icon="edit"></span><span>Passwort ändern</span><span class="chevron" aria-hidden="true">›</span>
           </button>
           <form id="change-pw-form" class="inline-form" hidden novalidate>
             <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
@@ -246,15 +329,15 @@
         <h2>Scannen &amp; Texterkennung</h2>
         <div class="card">
           <label class="settings-row">
-            <span>Automatisch zuschneiden</span>
+            <span class="f-row-icon" data-icon="crop"></span><span>Automatisch zuschneiden</span>
             <input type="checkbox" class="switch" id="autocrop-toggle" checked>
           </label>
           <label class="settings-row">
-            <span>Text automatisch erkennen</span>
+            <span class="f-row-icon" data-icon="text"></span><span>Text automatisch erkennen</span>
             <input type="checkbox" class="switch" id="ocr-toggle" checked>
           </label>
           <label class="settings-row">
-            <span>Sprachen</span>
+            <span class="f-row-icon" data-icon="sparkle"></span><span>Sprachen</span>
             <select id="ocr-lang">
               <option value="deu">Deutsch</option>
               <option value="deu+fra">Deutsch + Französisch</option>
@@ -263,17 +346,17 @@
             </select>
           </label>
           <button class="settings-row" type="button" id="ocr-backfill">
-            <span>Text älterer Dokumente erkennen</span><span class="hint" id="ocr-queue-status"></span>
+            <span class="f-row-icon" data-icon="rotate"></span><span>Text älterer Dokumente erkennen</span><span class="hint" id="ocr-queue-status"></span>
           </button>
           <label class="settings-row">
-            <span>Kalender-Einträge</span>
+            <span class="f-row-icon" data-icon="calendar2"></span><span>Kalender-Einträge</span>
             <select id="calendar-select">
               <option value="neutral">Neutral</option>
               <option value="title">Mit Titel</option>
             </select>
           </label>
         </div>
-        <p class="group-note">„Neutral“ schreibt nur „Frist – Dokumente-App“ in den Kalender. Dein Kalender ist nicht verschlüsselt – mit „Mit Titel“ steht dort z.&nbsp;B. „Frist: Rechnung Stadtwerke“.</p>
+        <p class="group-note">„Neutral“ schreibt nur „Frist – Folio“ in den Kalender. Dein Kalender ist nicht verschlüsselt – mit „Mit Titel“ steht dort z.&nbsp;B. „Frist: Rechnung Stadtwerke“.</p>
         <p class="group-note">Die Erkennung läuft nach dem Speichern im Hintergrund weiter, Seite für Seite – nur solange die App geöffnet ist. Wird sie geschlossen, geht es beim nächsten Öffnen weiter. Französisch lädt einmalig 0,7&nbsp;MB, Englisch 3&nbsp;MB.</p>
         <p class="group-note">Liest beim Scannen den Text und schlägt Ablageort, Datum, Titel und Notiz vor. Läuft komplett auf diesem iPhone – deine Dokumente werden nirgendwohin geschickt. Beim ersten Mal werden ca. 5&nbsp;MB Programm und Sprachdaten geladen (Internet nötig), danach geht es auch offline.</p>
       </div>
@@ -282,10 +365,10 @@
         <h2>Aufräumen</h2>
         <div class="card">
           <button class="settings-row" type="button" id="dup-scan">
-            <span>Duplikate suchen</span><span class="hint" id="dup-status"></span>
+            <span class="f-row-icon" data-icon="stack"></span><span>Duplikate suchen</span><span class="hint" id="dup-status"></span>
           </button>
           <button class="settings-row" type="button" id="trash-toggle" aria-expanded="false">
-            <span>Papierkorb</span><span class="hint" id="trash-count">leer</span>
+            <span class="f-row-icon" data-icon="trash"></span><span>Papierkorb</span><span class="hint" id="trash-count">leer</span>
           </button>
           <div id="trash-list" hidden></div>
         </div>
@@ -295,9 +378,9 @@
       <div class="settings-group" id="backup-group">
         <h2>Backup</h2>
         <div class="card">
-          <div class="settings-row"><span>Letztes Backup</span><span class="hint" id="last-backup">noch nie</span></div>
+          <div class="settings-row"><span class="f-row-icon" data-icon="clock"></span><span>Letztes Backup</span><span class="hint" id="last-backup">noch nie</span></div>
           <button class="settings-row" type="button" id="backup-create">
-            <span>Backup erstellen</span><span class="chevron" aria-hidden="true">›</span>
+            <span class="f-row-icon" data-icon="share"></span><span>Backup erstellen</span><span class="chevron" aria-hidden="true">›</span>
           </button>
           <div class="inline-form" id="backup-ready" hidden>
             <p class="success" id="backup-ready-text"></p>
@@ -305,7 +388,7 @@
             <p class="hint">Im nächsten Fenster „In Dateien sichern“ wählen, z.&nbsp;B. in iCloud Drive.</p>
           </div>
           <button class="settings-row" type="button" id="backup-import">
-            <span>Backup einlesen</span><span class="chevron" aria-hidden="true">›</span>
+            <span class="f-row-icon" data-icon="file"></span><span>Backup einlesen</span><span class="chevron" aria-hidden="true">›</span>
           </button>
           <form class="inline-form" id="import-form" hidden novalidate>
             <p id="import-summary"></p>
@@ -327,31 +410,24 @@
       <div class="settings-group">
         <h2>Info</h2>
         <div class="card">
-          <div class="settings-row"><span>Version</span><span class="hint">1.1.0</span></div>
+          <div class="settings-row"><span>Version</span><span class="hint">2.0.0 (Folio)</span></div>
           <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
           <div class="settings-row"><span>Dokumente</span><span class="hint" id="doc-count">–</span></div>
           <div class="settings-row"><span>Belegter Speicher</span><span class="hint" id="storage-used">–</span></div>
           <div class="settings-row"><span>Dauerhafter Speicher</span><span class="hint" id="persist-status">–</span></div>
         </div>
       </div>
+      </div>
     </section>
   </main>
 
-  <!-- Navigation unten -->
-  <nav class="tab-bar" aria-label="Hauptnavigation">
-    <button class="tab is-active" type="button" data-screen="scan" data-title="Scannen" aria-current="page">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
-      <span>Scannen</span>
-    </button>
-    <button class="tab" type="button" data-screen="archive" data-title="Ablage">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-      <span>Ablage</span>
-      <span class="tab-badge" id="archive-badge" hidden></span>
-    </button>
-    <button class="tab" type="button" data-screen="settings" data-title="Einstellungen">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-      <span>Einstellungen</span>
-    </button>
+  <!-- Navigation: schwebende Tab-Leiste mit rundem Scan-Button -->
+  <nav class="f-tabbar" aria-label="Hauptnavigation">
+    <button class="f-tab is-active" type="button" data-screen="today" aria-current="page" data-icon="home">Heute</button>
+    <button class="f-tab" type="button" data-screen="archive" data-icon="folder">Ablage<span class="tab-badge" id="archive-badge" hidden></span></button>
+    <button class="f-fab" type="button" data-action="live-scan" aria-label="Scannen" data-icon="scan"></button>
+    <button class="f-tab" type="button" data-screen="search" data-icon="search">Suche</button>
+    <button class="f-tab" type="button" data-screen="settings" data-icon="sliders">Mehr</button>
   </nav>
 
   <script type="module" src="app.js"></script>

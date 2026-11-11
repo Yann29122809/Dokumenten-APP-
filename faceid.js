@@ -78,8 +78,8 @@ export async function enableFaceId(dataKey) {
     const prfSalt = rand(32);
     const credential = await navigator.credentials.create({
       publicKey: {
-        rp: { name: 'Dokumente', id: location.hostname },
-        user: { id: rand(16), name: 'Dokumente-App', displayName: 'Dokumente-App' },
+        rp: { name: 'Folio', id: location.hostname },
+        user: { id: rand(16), name: 'Folio', displayName: 'Folio' },
         challenge: rand(32),
         pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
         authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'required', userVerification: 'required' },

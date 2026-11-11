@@ -189,10 +189,10 @@ export function buildIcs(doc, withTitle) {
   const end = new Date(startOfDay(r.date).getTime() + 86400000);
   const pad = (n) => String(n).padStart(2, '0');
   const endDay = `${end.getFullYear()}${pad(end.getMonth() + 1)}${pad(end.getDate())}`;
-  const summary = withTitle ? `${r.kind}: ${doc.meta.title}` : 'Frist – Dokumente-App';
+  const summary = withTitle ? `${r.kind}: ${doc.meta.title}` : 'Frist – Folio';
   const description = withTitle
-    ? [r.amount ? `Betrag: ${r.amount}` : null, 'Details in der Dokumente-App.'].filter(Boolean).join('\n')
-    : 'Ein Dokument in deiner Dokumente-App hat eine Frist. Öffne die App für Details.';
+    ? [r.amount ? `Betrag: ${r.amount}` : null, 'Details in Folio.'].filter(Boolean).join('\n')
+    : 'Ein Dokument in Folio hat eine Frist. Öffne die App für Details.';
 
   const alarms = [...new Set(r.lead && r.lead.length ? r.lead : DEFAULT_LEAD)].sort((a, b) => b - a).flatMap((days) => [
     'BEGIN:VALARM',
@@ -205,11 +205,11 @@ export function buildIcs(doc, withTitle) {
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Dokumente-App//DE',
+    'PRODID:-//Folio//DE',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     'BEGIN:VEVENT',
-    `UID:${crypto.randomUUID()}@dokumente-app`,
+    `UID:${crypto.randomUUID()}@folio`,
     `DTSTAMP:${utcStamp()}`,
     `DTSTART;VALUE=DATE:${day}`,
     `DTEND;VALUE=DATE:${endDay}`,

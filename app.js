@@ -3,14 +3,16 @@ import { faceIdAvailable, getFaceIdRecord, enableFaceId, unlockWithFaceId, disab
 import { getMeta, setMeta } from './db.js';
 import { formatBytes, toast } from './dom.js';
 import { hydrateIcons } from './icons.js';
-import { initScan, clearScan } from './scan.js';
-import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs, pageTextReady, getTrashed, renderTrash, renderSoon, openDoc, updateDupBanner } from './archive.js';
+import { initScan, clearScan, addCapturedFile, hasDraft } from './scan.js';
+import { openLiveScan, closeLiveScan } from './livescan.js';
+import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs, pageTextReady, getTrashed, renderTrash, openDoc, updateDupBanner, renderSearchScreen, clearSearchScreen, openDocFrom, openCollection } from './archive.js';
 import { loadFolders, clearFolders } from './folders.js';
 import { stopOcr, setOcrLanguages } from './ocr.js';
 import { buildIndex, clearSearch, setPageText, hasText, getPageTextsFor } from './search.js';
 import { initOcrQueue, enqueue, kick as kickOcr, pauseQueue, onQueueChange } from './ocrqueue.js';
 import { needsMigration, runMigrations, markSchemaCurrent } from './migrations.js';
-import { initImport, loadInbox, clearInbox } from './importer.js';
+import { initImport, loadInbox, clearInbox, importFiles } from './importer.js';
+import { initToday, renderToday, clearToday } from './today.js';
 import { initDupCheck, checkBeforeSave, findAllPairs, scanAllDuplicates, reviewPending, revalidatePending } from './dupcheck.js';
 import { loadDecisions, clearDecisions, loadPending, clearPending, onPendingChange, getPending } from './duplicates.js';
 import { createBackup, saveBackupFile, readBackupFile, importBackup, BackupFormatError } from './backup.js';
@@ -29,10 +31,13 @@ const saveSettings = () => setMeta('settings', settings);
 // =====================================================================
 // Navigation zwischen den drei Bildschirmen
 // =====================================================================
-const tabs = document.querySelectorAll('.tab');
+const tabs = document.querySelectorAll('.f-tab');
 const screens = document.querySelectorAll('.screen');
+let currentScreen = 'today';
 
 function showScreen(name) {
+  currentScreen = name;
+  document.body.classList.remove('doc-open');
   screens.forEach((screen) => {
     const active = screen.id === 'screen-' + name;
     screen.hidden = !active;
@@ -41,20 +46,38 @@ function showScreen(name) {
   tabs.forEach((tab) => {
     const active = tab.dataset.screen === name;
     tab.classList.toggle('is-active', active);
-    if (active) {
-      tab.setAttribute('aria-current', 'page');
-      $('screen-title').textContent = tab.dataset.title;
-    } else {
-      tab.removeAttribute('aria-current');
-    }
+    if (active) tab.setAttribute('aria-current', 'page');
+    else tab.removeAttribute('aria-current');
   });
   document.querySelector('.app-main').scrollTop = 0;
   if (name === 'archive') showRoot();
-  if (name === 'scan' && vaultKey) updateSoon();
+  if (name === 'today' && vaultKey) renderToday();
+  $('draft-banner').hidden = !(name === 'today' && hasDraft());
+  if (name === 'search' && vaultKey) renderSearchScreen();
   if (name === 'settings') updateInfo();
 }
 
 tabs.forEach((tab) => tab.addEventListener('click', () => showScreen(tab.dataset.screen)));
+
+// Runder Scan-Button in der Mitte: eigene Live-Kamera (02).
+// Ohne Kamera-Zugriff → bisherige iPhone-Kamera über die Dateiauswahl.
+function startScan() {
+  if (!vaultKey) return;
+  openLiveScan({
+    onCapture: (file) => { addCapturedFile(file); },
+    onDone: (count) => { if (count) showScreen('scan'); },
+    onFallback: () => $('scan-camera').click()
+  });
+}
+document.querySelector('[data-action="live-scan"]').addEventListener('click', startScan);
+$('scan-back').addEventListener('click', () => showScreen('today'));
+$('draft-banner').addEventListener('click', () => showScreen('scan'));
+$('lock-now-top').addEventListener('click', () => lock());
+
+function openDocument(id) {
+  showScreen('archive');
+  openDoc(id);
+}
 
 // =====================================================================
 // Hilfsfunktionen für Formulare
@@ -100,7 +123,7 @@ async function unlocked(key) {
   try {
     await loadFolders(key);
     await refreshArchive();
-    updateSoon();
+    renderToday();
     await buildIndex(key, getDocs());
     if (await needsMigration()) {
       if (getDocs().length) showMigrationDialog();
@@ -117,11 +140,15 @@ async function unlocked(key) {
   }
 }
 
-// „Bald fällig“ auf der Startseite
-function updateSoon() {
-  renderSoon($('soon-section'), (id) => { showScreen('archive'); openDoc(id); });
-}
-document.addEventListener('dokumente:changed', updateSoon);
+// „Heute“ aktualisieren, wenn sich Dokumente ändern
+document.addEventListener('dokumente:changed', () => { if (currentScreen === 'today') renderToday(); });
+initToday({
+  getKey: () => vaultKey,
+  getDocs,
+  openDoc: (id) => openDocument(id),
+  openCollection: (id) => { showScreen('archive'); openCollection(id); },
+  startScan
+});
 
 // ---------- Umstellung des Datenmodells (mit Backup-Angebot) ----------
 let migrationBackup = null;
@@ -197,6 +224,7 @@ $('migration-run').addEventListener('click', async () => {
 function lock() {
   if (!vaultRecord) return;
   vaultKey = null;
+  closeLiveScan();
   // Alles Entschlüsselte aus dem Speicher und vom Bildschirm entfernen
   clearScan();
   clearArchive();
@@ -205,8 +233,8 @@ function lock() {
   clearInbox();
   clearDecisions();
   clearPending();
-  $('soon-section').hidden = true;
-  $('soon-section').replaceChildren();
+  clearToday();
+  clearSearchScreen();
   document.querySelectorAll('.dup-overlay').forEach((n) => n.remove());
   $('trash-list').hidden = true;
   pauseQueue();
@@ -219,7 +247,8 @@ function lock() {
   $('change-pw-toggle').setAttribute('aria-expanded', 'false');
   $('faceid-form').hidden = true;
   $('faceid-error').textContent = '';
-  showScreen('scan');
+  updateFaceIdUi();
+  showScreen('today');
   showLockView('unlock');
   document.body.classList.add('locked');
   clearTimeout(inactivityTimer);
@@ -307,19 +336,28 @@ $('unlock-form').addEventListener('submit', async (event) => {
 
 // ---------- Face ID ----------
 function updateFaceIdUi() {
-  $('faceid-unlock').hidden = !faceIdRecord;
+  // Sperrbildschirm: mit Face ID großer Knopf, Passwort erst auf Wunsch
+  $('faceid-block').hidden = !faceIdRecord;
+  $('show-password').hidden = !faceIdRecord;
+  $('password-panel').hidden = Boolean(faceIdRecord);
   $('unlock-text').textContent = faceIdRecord
-    ? 'Oder gib dein Passwort ein.'
-    : 'Gib dein Passwort ein, um deine Dokumente zu öffnen.';
+    ? 'Deine Dokumente sind verschlüsselt. Entsperre sie mit Face ID.'
+    : 'Deine Dokumente sind verschlüsselt. Entsperre sie mit deinem Passwort.';
   $('faceid-status').textContent = faceIdRecord ? 'aktiv' : 'aus';
   $('faceid-toggle-label').textContent = faceIdRecord ? 'Face ID ausschalten' : 'Face ID einrichten';
 }
+
+$('show-password').addEventListener('click', () => {
+  $('password-panel').hidden = false;
+  $('show-password').hidden = true;
+  $('unlock-password').focus();
+});
 
 $('faceid-unlock').addEventListener('click', async () => {
   if (!faceIdRecord) return;
   const button = $('faceid-unlock');
   $('faceid-error').textContent = '';
-  setBusy(button, true, 'Face ID …');
+  setBusy(button, true, '…');
   try {
     const key = await unlockWithFaceId(faceIdRecord);
     setBusy(button, false);
@@ -332,7 +370,7 @@ $('faceid-unlock').addEventListener('click', async () => {
 
 $('faceid-toggle').addEventListener('click', async () => {
   if (faceIdRecord) {
-    if (!confirm('Face ID ausschalten? Du entsperrst dann wieder nur mit dem Passwort.\n\nDen Passkey „Dokumente-App“ kannst du danach in der App „Passwörter“ löschen.')) return;
+    if (!confirm('Face ID ausschalten? Du entsperrst dann wieder nur mit dem Passwort.\n\nDen Passkey „Dokumente-App“ bzw. „Folio“ kannst du danach in der App „Passwörter“ löschen.')) return;
     await disableFaceId();
     faceIdRecord = null;
     updateFaceIdUi();
@@ -404,6 +442,7 @@ function resetInactivityTimer() {
 document.addEventListener('visibilitychange', () => {
   if (!vaultKey) return;
   if (document.visibilityState === 'hidden') {
+    closeLiveScan();   // Kamera nie im Hintergrund laufen lassen
     hiddenSince = Date.now();
     hiddenForExternal = Date.now() < externalUntil;
     if (!hiddenForExternal && settings.autoLockMinutes <= 0) lock();
@@ -444,6 +483,16 @@ initScan({
   getDocs,
   enqueueOcr: enqueue,
   checkDuplicate: checkBeforeSave,
+  openCamera: startScan,
+  sendToInbox: async (file) => {
+    showScreen('today');
+    await importFiles([file]);
+  },
+  // Erkannt-Bildschirm zeigen, sobald Seiten da sind; danach zurück zu „Heute“
+  onDraftChange: (hasPages) => {
+    if (hasPages && currentScreen !== 'scan') showScreen('scan');
+    if (!hasPages && currentScreen === 'scan') showScreen('today');
+  },
   onSaved: async (docId, texts) => {
     try {
       await refreshArchive();
@@ -491,6 +540,9 @@ initImport({
 });
 
 initArchive({
+  openSearch: () => { showScreen('search'); renderSearchScreen({ focus: true }); },
+  openDocFromSearch: (id, page, terms) => { showScreen('archive'); openDocFrom(id, page, terms); },
+  openCollectionSoon: () => { showScreen('archive'); openCollection('soon'); },
   getPendingCount: () => getPending().length,
   openReview: () => reviewPending(),
   getKey: () => vaultKey,
@@ -647,7 +699,7 @@ $('backup-create').addEventListener('click', async () => {
   if (!vaultKey) return;
   resetBackupUi();
   const button = $('backup-create');
-  const label = button.querySelector('span');
+  const label = button.querySelector('span:not(.f-row-icon)');
   label.textContent = 'Backup wird erstellt …';
   button.disabled = true;
   try {

@@ -67,8 +67,14 @@ function otsu(histogram, total) {
  */
 export async function detectDocument(blob) {
   const img = await loadImage(blob);
-  const W = img.naturalWidth;
-  const H = img.naturalHeight;
+  return detectInSource(img, img.naturalWidth, img.naturalHeight);
+}
+
+/**
+ * Gleiche Erkennung für ein Kamerabild (Video) oder Canvas.
+ * Ergebnis: vier Ecken in Pixeln der Quelle oder null.
+ */
+export function detectInSource(source, W, H) {
   const scale = Math.min(1, DETECT_EDGE / Math.max(W, H));
   const w = Math.max(1, Math.round(W * scale));
   const h = Math.max(1, Math.round(H * scale));
@@ -77,7 +83,7 @@ export async function detectDocument(blob) {
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0, w, h);
+  ctx.drawImage(source, 0, 0, w, h);
   const px = ctx.getImageData(0, 0, w, h).data;
   canvas.width = 0;
 
