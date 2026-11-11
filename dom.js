@@ -8,7 +8,12 @@ export function el(tag, props = {}, ...children) {
     if (name === 'class') node.className = value;
     else if (name === 'text') node.textContent = value;
     // Stile nur über JavaScript setzen – die Sicherheitsregel blockiert style="…"
-    else if (name === 'style') Object.assign(node.style, value);
+    else if (name === 'style') {
+      for (const [prop, v] of Object.entries(value)) {
+        if (prop.startsWith('--')) node.style.setProperty(prop, v);
+        else node.style[prop] = v;
+      }
+    }
     else if (name.startsWith('on')) node.addEventListener(name.slice(2), value);
     else if (name in node && typeof value !== 'string') node[name] = value;
     else node.setAttribute(name, value === true ? '' : value);
@@ -18,6 +23,22 @@ export function el(tag, props = {}, ...children) {
     node.append(child instanceof Node ? child : String(child));
   }
   return node;
+}
+
+/** Kurze Bestätigung unten am Bildschirm, z. B. „Gespeichert“. */
+let toastTimer = null;
+export function toast(text, kind = 'ok') {
+  let node = document.getElementById('toast');
+  if (!node) {
+    node = el('div', { id: 'toast', class: 'toast', role: 'status', 'aria-live': 'polite' });
+    document.body.append(node);
+  }
+  node.textContent = text;
+  node.className = `toast is-${kind}`;
+  // erst im nächsten Bild einblenden, damit die Animation läuft
+  requestAnimationFrame(() => node.classList.add('is-visible'));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.remove('is-visible'), 2600);
 }
 
 /** Heutiges Datum als JJJJ-MM-TT (Ortszeit). */

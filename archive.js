@@ -1,7 +1,8 @@
 // Bildschirm „Ablage“: Ablageorte und Unterordner, Suche, Dokument ansehen,
 // bearbeiten, als PDF teilen oder löschen.
 
-import { el, formatDate } from './dom.js';
+import { el, formatDate, toast } from './dom.js';
+import { icon } from './icons.js';
 import { listDocuments, loadThumb, loadPages, updateMeta, deleteDocument } from './docs.js';
 import {
   childFolders, folderById, folderPath, folderLabel, folderColor, descendantIds, existingFolderId,
@@ -97,27 +98,61 @@ function countIn(folderId) {
   return docs.filter((d) => ids.has(d.meta.category)).length;
 }
 
-function folderRow(folder) {
+/** Ordner als farbige Kachel */
+function folderTile(folder) {
   const subCount = childFolders(folder.id).length;
-  return el('button', { type: 'button', class: 'list-row', onclick: () => go({ name: 'folder', id: folder.id }) },
-    dot(folder.id),
-    el('span', { class: 'grow' },
-      el('span', { class: 'row-title', text: folder.name }),
-      subCount ? el('span', { class: 'row-sub', text: subCount === 1 ? '1 Unterordner' : `${subCount} Unterordner` }) : null
-    ),
-    el('span', { class: 'count', text: String(countIn(folder.id)) }),
-    el('span', { class: 'chevron', 'aria-hidden': 'true', text: '›' })
+  const count = countIn(folder.id);
+  return el('button', {
+    type: 'button', class: 'tile', style: { '--tile': folderColor(folder.id) },
+    onclick: () => go({ name: 'folder', id: folder.id })
+  },
+    el('span', { class: 'tile-icon' }, icon('folder')),
+    el('span', { class: 'tile-name', text: folder.name }),
+    el('span', { class: 'tile-meta', text: [
+      count === 1 ? '1 Dokument' : `${count} Dokumente`,
+      subCount ? (subCount === 1 ? '1 Ordner' : `${subCount} Ordner`) : null
+    ].filter(Boolean).join(' · ') })
   );
 }
 
-function docRow(doc, showFolder, backView) {
+function newTile(label, onclick) {
+  return el('button', { type: 'button', class: 'tile tile-new', onclick },
+    el('span', { class: 'tile-icon' }, icon('folderPlus')),
+    el('span', { class: 'tile-name', text: label })
+  );
+}
+
+/** Vorschaubild laden (entschlüsselt) */
+function thumbImg(doc) {
   const myRender = renderId;
   const img = el('img', { class: 'thumb', alt: '' });
   loadThumb(ctx.getKey(), doc).then((blob) => {
     if (myRender === renderId) img.src = trackUrl(blob);
   }).catch(() => {});
+  return img;
+}
+
+/** Dokument als Karte mit großem Vorschaubild */
+function docCard(doc, showFolder, backView) {
+  const due = doc.meta.dueDate && !doc.meta.dueDone;
+  return el('button', { type: 'button', class: 'doc-card', onclick: () => go({ name: 'detail', id: doc.id, back: backView }) },
+    el('span', { class: 'doc-card-thumb' },
+      thumbImg(doc),
+      due ? el('span', { class: `due-badge ${dueClass(doc.meta.dueDate)}` }, icon('clock'), dueLabel(doc.meta.dueDate)) : null,
+      doc.meta.pageCount > 1 ? el('span', { class: 'pages-badge', text: String(doc.meta.pageCount) }) : null
+    ),
+    el('span', { class: 'doc-card-title', text: doc.meta.title }),
+    el('span', { class: 'doc-card-sub' },
+      showFolder ? dot(existingFolderId(doc.meta.category)) : null,
+      [showFolder ? folderById(existingFolderId(doc.meta.category))?.name : null, formatDate(doc.meta.date)].filter(Boolean).join(' · ')
+    )
+  );
+}
+
+/** Dokument als Zeile (für Suchtreffer) */
+function docRow(doc, showFolder, backView) {
   return el('button', { type: 'button', class: 'doc-row', onclick: () => go({ name: 'detail', id: doc.id, back: backView }) },
-    el('span', { class: 'thumb-box' }, img),
+    el('span', { class: 'thumb-box' }, thumbImg(doc)),
     el('span', { class: 'doc-text' },
       el('span', { class: 'doc-title', text: doc.meta.title }),
       el('span', { class: 'doc-sub', text: [
@@ -126,12 +161,12 @@ function docRow(doc, showFolder, backView) {
         pagesText(doc.meta.pageCount)
       ].filter(Boolean).join(' · ') })
     ),
-    el('span', { class: 'chevron', 'aria-hidden': 'true', text: '›' })
+    icon('right', 'icon chevron-icon')
   );
 }
 
 function backButton(label, target) {
-  return el('button', { type: 'button', class: 'back-btn', onclick: () => go(target) }, '‹ ', label);
+  return el('button', { type: 'button', class: 'back-btn', onclick: () => go(target) }, icon('back'), label);
 }
 
 function viewLabel(v) {
@@ -149,9 +184,10 @@ function renderRoot() {
   const results = el('div', { id: 'search-results' });
   const folderList = el('div', {});
   const search = el('input', {
-    type: 'search', class: 'search-input', placeholder: 'Suchen: Titel, Text, Absender, Datum …',
+    type: 'search', class: 'search-input', placeholder: 'Titel, Text, Absender, Datum …',
     'aria-label': 'Dokumente durchsuchen', value: query, autocomplete: 'off', enterkeyhint: 'search'
   });
+  const searchBox = el('label', { class: 'search-box' }, icon('search'), search);
 
   const update = () => {
     query = search.value;
@@ -172,23 +208,26 @@ function renderRoot() {
   folderList.append(
     backupReminder() || '',
     deadlinesCard() || '',
-    el('div', { class: 'card' },
-      el('button', { type: 'button', class: 'list-row', onclick: () => go({ name: 'all' }) },
-        el('span', { class: 'dot dot-all' }),
-        el('span', { class: 'grow', text: 'Alle Dokumente' }),
-        el('span', { class: 'count', text: String(docs.length) }),
-        el('span', { class: 'chevron', 'aria-hidden': 'true', text: '›' })
+    el('h3', { class: 'section-label', text: 'Ablageorte' }),
+    el('div', { class: 'tile-grid' },
+      el('button', { type: 'button', class: 'tile tile-all', onclick: () => go({ name: 'all' }) },
+        el('span', { class: 'tile-icon' }, icon('stack')),
+        el('span', { class: 'tile-name', text: 'Alle Dokumente' }),
+        el('span', { class: 'tile-meta', text: docs.length === 1 ? '1 Dokument' : `${docs.length} Dokumente` })
       ),
-      ...roots.map(folderRow)
+      ...roots.map(folderTile),
+      newTile('Neuer Ablageort', async () => {
+        const name = prompt('Name des neuen Ablageorts (z. B. „Krankenakte“):');
+        if (name && name.trim()) {
+          await createFolder(ctx.getKey(), name);
+          toast(`Ablageort „${name.trim()}“ angelegt`);
+        }
+      })
     ),
-    el('button', { type: 'button', class: 'btn-secondary full', text: '+ Neuer Ablageort', onclick: async () => {
-      const name = prompt('Name des neuen Ablageorts (z. B. „Krankenakte“):');
-      if (name && name.trim()) await createFolder(ctx.getKey(), name);
-    } }),
     docs.length ? '' : el('p', { class: 'hint center', text: 'Noch keine Dokumente abgelegt. Scanne dein erstes Dokument unter „Scannen“.' })
   );
 
-  show(search, results, folderList);
+  show(searchBox, results, folderList);
   if (query) update();
 }
 
@@ -211,12 +250,12 @@ function deadlinesCard() {
     el('h3', { class: 'section-label', text: 'Fristen' }),
     el('div', { class: 'card' }, open.slice(0, 8).map((doc) =>
       el('button', { type: 'button', class: 'list-row', onclick: () => go({ name: 'detail', id: doc.id, back: { name: 'root' } }) },
-        el('span', { class: 'due-icon', 'aria-hidden': 'true', text: '⏰' }),
+        el('span', { class: `due-icon ${dueClass(doc.meta.dueDate)}` }, icon('clock')),
         el('span', { class: 'grow' },
           el('span', { class: 'row-title', text: doc.meta.title }),
           el('span', { class: `row-sub due ${dueClass(doc.meta.dueDate)}`, text: dueLabel(doc.meta.dueDate) })
         ),
-        el('span', { class: 'chevron', 'aria-hidden': 'true', text: '›' })
+        icon('right', 'icon chevron-icon')
       )
     )),
     open.length > 8 ? el('p', { class: 'hint', text: `… und ${open.length - 8} weitere` }) : ''
@@ -243,7 +282,7 @@ function renderAll() {
     backButton('Ablage', { name: 'root' }),
     el('h2', { class: 'view-title', text: 'Alle Dokumente' }),
     docs.length
-      ? el('div', { class: 'card' }, docs.map((d) => docRow(d, true, { name: 'all' })))
+      ? el('div', { class: 'doc-grid' }, docs.map((d) => docCard(d, true, { name: 'all' })))
       : el('p', { class: 'hint center', text: 'Noch keine Dokumente.' })
   );
 }
@@ -260,37 +299,52 @@ function renderFolder(id) {
   const own = docs.filter((d) => d.meta.category === id);
   const key = ctx.getKey();
 
-  const actions = el('div', { class: 'button-row' },
-    el('button', { type: 'button', class: 'btn-secondary', text: '+ Unterordner', onclick: async () => {
-      const name = prompt(`Name des Unterordners in „${folder.name}“\n(z. B. „Krankenhausaufenthalt März 2026“):`);
-      if (name && name.trim()) await createFolder(key, name, id);
-    } }),
-    el('button', { type: 'button', class: 'btn-secondary', text: 'Umbenennen', onclick: async () => {
+  const addSub = async () => {
+    const name = prompt(`Name des Unterordners in „${folder.name}“\n(z. B. „Krankenhausaufenthalt März 2026“):`);
+    if (name && name.trim()) {
+      await createFolder(key, name, id);
+      toast(`Unterordner „${name.trim()}“ angelegt`);
+    }
+  };
+
+  const actions = el('div', { class: 'action-bar' },
+    subs.length ? null : actionButton('folderPlus', 'Unterordner', addSub),
+    actionButton('edit', 'Umbenennen', async () => {
       const name = prompt('Neuer Name:', folder.name);
       if (name && name.trim()) await renameFolder(key, id, name);
-    } }),
-    el('button', { type: 'button', class: 'btn-secondary danger', text: 'Löschen', onclick: async () => {
+    }),
+    actionButton('trash', 'Löschen', async () => {
       if (subs.length || own.length) {
         alert('Dieser Ordner ist nicht leer. Verschiebe oder lösche zuerst die Dokumente und Unterordner darin.');
         return;
       }
       if (!confirm(`Ordner „${folder.name}“ löschen?`)) return;
       await deleteFolder(key, id);
+      toast('Ordner gelöscht');
       go(parent ? { name: 'folder', id: parent.id } : { name: 'root' });
-    } })
+    }, 'danger')
   );
 
   show(
     backButton(parent ? parent.name : 'Ablage', parent ? { name: 'folder', id: parent.id } : { name: 'root' }),
-    el('h2', { class: 'view-title' }, dot(id), ' ', folder.name),
-    path.length > 1 ? el('p', { class: 'doc-info', text: path.map((f) => f.name).join(' › ') }) : null,
+    el('div', { class: 'folder-head', style: { '--tile': folderColor(id) } },
+      el('span', { class: 'tile-icon' }, icon('folder')),
+      el('span', {},
+        el('h2', { class: 'view-title', text: folder.name }),
+        path.length > 1 ? el('span', { class: 'folder-path', text: path.slice(0, -1).map((f) => f.name).join(' › ') }) : null
+      )
+    ),
     subs.length ? el('h3', { class: 'section-label', text: 'Unterordner' }) : null,
-    subs.length ? el('div', { class: 'card' }, subs.map(folderRow)) : null,
+    subs.length ? el('div', { class: 'tile-grid' }, ...subs.map(folderTile), newTile('Neuer Unterordner', addSub)) : null,
     own.length ? el('h3', { class: 'section-label', text: 'Dokumente' }) : null,
-    own.length ? el('div', { class: 'card' }, own.map((d) => docRow(d, false, { name: 'folder', id }))) : null,
-    !subs.length && !own.length ? el('p', { class: 'hint center', text: 'Dieser Ordner ist noch leer.' }) : null,
+    own.length ? el('div', { class: 'doc-grid' }, own.map((d) => docCard(d, false, { name: 'folder', id }))) : null,
+    !own.length ? el('p', { class: 'hint center', text: subs.length ? 'Keine Dokumente direkt in diesem Ordner.' : 'Dieser Ordner ist noch leer.' }) : null,
     actions
   );
+}
+
+function actionButton(iconName, label, onclick, extraClass = '') {
+  return el('button', { type: 'button', class: `action-btn ${extraClass}`, onclick }, icon(iconName), el('span', { text: label }));
 }
 
 // ---------------------------------------------------------------------
@@ -305,7 +359,8 @@ function renderDetail(id) {
   const back = view.back || { name: 'folder', id: folderId };
 
   const pagesBox = el('div', { class: 'pages' }, el('p', { class: 'hint center', text: 'Seiten werden entschlüsselt …' }));
-  const shareBtn = el('button', { type: 'button', class: 'btn-secondary', text: 'PDF teilen', disabled: true, onclick: () => share(doc) });
+  const shareBtn = actionButton('share', 'PDF teilen', () => share(doc));
+  shareBtn.disabled = true;
   let pageBlobs = [];
 
   loadPages(key, doc).then(async (blobs) => {
@@ -326,7 +381,7 @@ function renderDetail(id) {
 
   const hasText = Boolean(doc.meta.text && doc.meta.text.trim());
   const ocrBtn = !hasText && ctx.isOcrEnabled()
-    ? el('button', { type: 'button', class: 'btn-text', text: 'Text erkennen (für die Suche)', onclick: (e) => recognizeLater(doc, pageBlobs, e.currentTarget) })
+    ? el('button', { type: 'button', class: 'btn-text with-icon', onclick: (e) => recognizeLater(doc, pageBlobs, e.currentTarget) }, icon('text'), 'Text erkennen (für die Suche)')
     : null;
 
   show(
@@ -337,10 +392,10 @@ function renderDetail(id) {
     ),
     doc.meta.note ? el('p', { class: 'doc-note', text: doc.meta.note }) : null,
     doc.meta.dueDate ? dueBox(doc) : null,
-    el('div', { class: 'button-row' },
-      el('button', { type: 'button', class: 'btn-secondary', text: 'Bearbeiten', onclick: () => renderEdit(doc) }),
+    el('div', { class: 'action-bar' },
+      actionButton('edit', 'Bearbeiten', () => renderEdit(doc)),
       shareBtn,
-      el('button', { type: 'button', class: 'btn-secondary danger', text: 'Löschen', onclick: () => remove(doc, back) })
+      actionButton('trash', 'Löschen', () => remove(doc, back), 'danger')
     ),
     el('div', { id: 'edit-slot' }),
     pagesBox,
@@ -355,19 +410,20 @@ function dueBox(doc) {
   const withTitle = ctx.calendarWithTitle();
   return el('div', { class: `due-box ${done ? 'is-done' : dueClass(doc.meta.dueDate)}` },
     el('div', { class: 'due-head' },
-      el('strong', { text: done ? '✓ Frist erledigt' : `⏰ Frist: ${formatDate(doc.meta.dueDate)}` }),
+      el('strong', {}, icon(done ? 'checkCircle' : 'clock'), done ? 'Frist erledigt' : `Frist: ${formatDate(doc.meta.dueDate)}`),
       done ? null : el('span', { text: dueLabel(doc.meta.dueDate) })
     ),
     el('div', { class: 'due-actions' },
-      done ? null : el('button', { type: 'button', class: 'btn-secondary', text: 'In Kalender eintragen', onclick: () => {
+      done ? null : el('button', { type: 'button', class: 'btn-secondary with-icon', onclick: () => {
         ctx.suspendAutoLock();
         openInCalendar(doc, withTitle);
         setTimeout(ctx.resumeAutoLock, 1500);
-      } }),
-      el('button', { type: 'button', class: 'btn-secondary', text: done ? 'Wieder offen' : 'Erledigt', onclick: async () => {
+      } }, icon('calendar'), 'In Kalender'),
+      el('button', { type: 'button', class: 'btn-secondary with-icon', onclick: async () => {
         doc.meta = await updateMeta(ctx.getKey(), doc, { dueDone: !done });
+        toast(done ? 'Frist wieder offen' : 'Frist erledigt');
         render();
-      } })
+      } }, icon(done ? 'clock' : 'check'), done ? 'Wieder offen' : 'Erledigt')
     ),
     done ? null : el('button', { type: 'button', class: 'btn-text small', text: 'Klappt der Kalender nicht? Als Datei teilen', onclick: async () => {
       ctx.suspendAutoLock();
@@ -420,6 +476,7 @@ function renderEdit(doc) {
         title: title.value.trim(), category: existingFolderId(selected), date: date.value || doc.meta.date, note: note.value.trim(),
         dueDate: due.value || null, dueDone: due.value && due.value !== doc.meta.dueDate ? false : Boolean(doc.meta.dueDone)
       });
+      toast('Änderungen gespeichert');
       render();
     } catch (err) {
       console.error(err);
@@ -484,6 +541,7 @@ async function remove(doc, back) {
   if (!confirm(`„${doc.meta.title}“ wirklich löschen?\n\nDas kann nicht rückgängig gemacht werden (außer über ein Backup).`)) return;
   try {
     await deleteDocument(doc);
+    toast('Dokument gelöscht');
     view = back;
     await refreshArchive();
   } catch (err) {

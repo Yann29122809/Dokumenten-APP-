@@ -13,7 +13,7 @@
 
   <!-- PWA -->
   <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#1f4e8c">
+  <meta name="theme-color" content="#6b4eff">
 
   <!-- iPhone / iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -36,8 +36,13 @@
 
     <!-- Ersteinrichtung -->
     <form id="setup-form" class="lock-form" hidden novalidate>
-      <h1>Passwort festlegen</h1>
-      <p class="lock-text">Mit diesem Passwort werden alle deine Dokumente auf diesem Gerät verschlüsselt.</p>
+      <h1>Willkommen</h1>
+      <ul class="intro-list">
+        <li><span data-icon="lock"></span><span><strong>Verschlüsselt</strong> – nur mit deinem Passwort lesbar</span></li>
+        <li><span data-icon="device"></span><span><strong>Nur auf diesem iPhone</strong> – keine Cloud, kein Konto</span></li>
+        <li><span data-icon="sparkle"></span><span><strong>Mitdenkend</strong> – erkennt Text, Datum und Fristen</span></li>
+      </ul>
+      <p class="lock-text">Lege zuerst ein Passwort fest. Damit werden alle deine Dokumente verschlüsselt.</p>
       <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
       <label>Passwort
         <input type="password" id="setup-password" autocomplete="new-password" minlength="8" required>
@@ -57,7 +62,7 @@
     <!-- Entsperren -->
     <form id="unlock-form" class="lock-form" hidden novalidate>
       <h1>Gesperrt</h1>
-      <button class="btn-primary faceid-btn" type="button" id="faceid-unlock" hidden>Mit Face ID entsperren</button>
+      <button class="btn-primary faceid-btn with-icon" type="button" id="faceid-unlock" data-icon="faceid" hidden>Mit Face ID entsperren</button>
       <p class="error" id="faceid-error" role="alert"></p>
       <p class="lock-text" id="unlock-text">Gib dein Passwort ein, um deine Dokumente zu öffnen.</p>
       <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
@@ -82,15 +87,20 @@
     <!-- Bildschirm 1: Scannen -->
     <section id="screen-scan" class="screen is-active" aria-labelledby="screen-title">
       <!-- Noch keine Seite aufgenommen -->
-      <div id="scan-empty" class="placeholder">
-        <svg class="placeholder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
-        <h2>Dokument scannen</h2>
-        <p>Fotografiere ein Dokument. Bei mehreren Seiten nimmst du einfach eine nach der anderen auf.</p>
-        <div class="stack">
-          <button class="btn-primary" type="button" id="scan-camera">Foto aufnehmen</button>
-          <button class="btn-secondary" type="button" id="scan-library">Aus Fotos wählen</button>
+      <div id="scan-empty" class="scan-hero">
+        <div class="hero-card">
+          <span class="hero-icon" data-icon="scan"></span>
+          <h2>Dokument scannen</h2>
+          <p>Foto aufnehmen – die App schneidet zu, liest den Text und schlägt die Ablage vor.</p>
+          <button class="btn-primary btn-large with-icon" type="button" id="scan-camera" data-icon="camera">Foto aufnehmen</button>
+          <button class="btn-ghost with-icon" type="button" id="scan-library" data-icon="photos">Aus Fotos wählen</button>
         </div>
-        <p class="hint tip">Tipp: Dokument flach auf einen dunklen Untergrund legen, gutes Licht, von oben fotografieren.</p>
+        <h3 class="section-label">Tipps für gute Scans</h3>
+        <ul class="tips card">
+          <li><span data-icon="file"></span>Helles Papier auf dunklem Untergrund</li>
+          <li><span data-icon="sparkle"></span>Gutes Licht, ohne Schatten auf dem Blatt</li>
+          <li><span data-icon="stack"></span>Mehrere Seiten einfach nacheinander aufnehmen</li>
+        </ul>
       </div>
 
       <!-- Entwurf mit aufgenommenen Seiten -->
@@ -100,8 +110,8 @@
         </div>
         <div class="page-grid" id="scan-pages"></div>
         <div class="button-row">
-          <button class="btn-secondary" type="button" id="scan-add-camera">+ Kamera</button>
-          <button class="btn-secondary" type="button" id="scan-add-library">+ Aus Fotos</button>
+          <button class="btn-secondary with-icon" type="button" id="scan-add-camera" data-icon="camera">Seite</button>
+          <button class="btn-secondary with-icon" type="button" id="scan-add-library" data-icon="photos">Aus Fotos</button>
         </div>
         <label class="check toggle-row">
           <input type="checkbox" id="scan-filter" checked>
@@ -256,7 +266,7 @@
       <div class="settings-group">
         <h2>Info</h2>
         <div class="card">
-          <div class="settings-row"><span>Version</span><span class="hint">0.5.0</span></div>
+          <div class="settings-row"><span>Version</span><span class="hint">0.6.0</span></div>
           <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
           <div class="settings-row"><span>Dokumente</span><span class="hint" id="doc-count">–</span></div>
           <div class="settings-row"><span>Belegter Speicher</span><span class="hint" id="storage-used">–</span></div>

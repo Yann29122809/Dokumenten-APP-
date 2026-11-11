@@ -1,7 +1,8 @@
 // Bildschirm „Scannen“: Fotos aufnehmen, Seiten sortieren/drehen,
 // Text erkennen, Vorschläge eintragen und verschlüsselt speichern.
 
-import { el, todayISO, formatDate } from './dom.js';
+import { el, todayISO, formatDate, toast } from './dom.js';
+import { icon } from './icons.js';
 import { prepareImage, renderPage, makeThumb } from './images.js';
 import { saveDocument } from './docs.js';
 import {
@@ -139,10 +140,10 @@ function render() {
     el('figcaption', {},
       el('span', { text: `Seite ${i + 1}` }),
       el('span', { class: 'tile-actions' },
-        i > 0 ? el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} nach vorne`, text: '←', onclick: () => move(i, -1) }) : null,
-        el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} zuschneiden`, text: '✂︎', onclick: () => crop(i) }),
-        el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} drehen`, text: '↻', onclick: () => rotate(i) }),
-        el('button', { type: 'button', class: 'icon-btn danger', 'aria-label': `Seite ${i + 1} löschen`, text: '✕', onclick: () => removePage(i) })
+        i > 0 ? el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} nach vorne`, onclick: () => move(i, -1) }, icon('left')) : null,
+        el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} zuschneiden`, onclick: () => crop(i) }, icon('crop')),
+        el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} drehen`, onclick: () => rotate(i) }, icon('rotate')),
+        el('button', { type: 'button', class: 'icon-btn danger', 'aria-label': `Seite ${i + 1} löschen`, onclick: () => removePage(i) }, icon('trash'))
       )
     )
   )));
@@ -377,7 +378,8 @@ async function onSave(event) {
 
     lastFolderId = category;
     clearScan();
-    setStatus(`✓ „${title}“ wurde in ${folderLabel(category)} gespeichert.`);
+    setStatus(`„${title}“ liegt jetzt in ${folderLabel(category)}.`);
+    toast('Verschlüsselt gespeichert');
     ctx.onSaved();
   } catch (err) {
     console.error(err);

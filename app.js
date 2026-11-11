@@ -1,7 +1,8 @@
 import { createVault, openVault, openVaultForWrapping, changeVaultPassword, WrongPasswordError } from './crypto.js';
 import { faceIdAvailable, getFaceIdRecord, enableFaceId, unlockWithFaceId, disableFaceId } from './faceid.js';
 import { getMeta, setMeta } from './db.js';
-import { formatBytes } from './dom.js';
+import { formatBytes, toast } from './dom.js';
+import { hydrateIcons } from './icons.js';
 import { initScan, clearScan } from './scan.js';
 import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs } from './archive.js';
 import { loadFolders, clearFolders } from './folders.js';
@@ -51,13 +52,16 @@ tabs.forEach((tab) => tab.addEventListener('click', () => showScreen(tab.dataset
 // =====================================================================
 // Hilfsfunktionen für Formulare
 // =====================================================================
+// Knopf-Inhalt (Text + Symbol) merken, solange „Wird geladen …“ angezeigt wird
+const savedContent = new WeakMap();
 function setBusy(button, busy, busyText) {
   if (busy) {
-    button.dataset.label = button.textContent;
+    if (!button.disabled) savedContent.set(button, [...button.childNodes]);
     button.textContent = busyText;
     button.disabled = true;
   } else {
-    button.textContent = button.dataset.label || button.textContent;
+    const saved = savedContent.get(button);
+    if (saved) button.replaceChildren(...saved);
     button.disabled = false;
   }
 }
@@ -248,7 +252,7 @@ $('faceid-form').addEventListener('submit', async (event) => {
     faceIdRecord = await getFaceIdRecord();
     $('faceid-form').hidden = true;
     updateFaceIdUi();
-    alert('Face ID ist eingerichtet. Ab jetzt kannst du die App mit deinem Gesicht entsperren.');
+    toast('Face ID ist eingerichtet');
   } catch (err) {
     $('faceid-password').value = '';
     if (err instanceof WrongPasswordError) error.textContent = 'Das Passwort ist falsch.';
@@ -391,6 +395,7 @@ $('change-pw-form').addEventListener('submit', async (event) => {
     vaultRecord = newRecord;
     clearPasswordFields();
     success.textContent = 'Passwort wurde geändert. Ältere Backups öffnest du weiterhin mit dem alten Passwort.';
+    toast('Passwort geändert');
   } catch (err) {
     if (err instanceof WrongPasswordError) {
       error.textContent = 'Das aktuelle Passwort ist falsch.';
@@ -455,6 +460,7 @@ $('backup-save').addEventListener('click', async () => {
       $('backup-ready').hidden = true;
       pendingBackup = null;
       updateInfo();
+      toast('Backup gesichert');
     }
   } catch (err) {
     console.error(err);
@@ -516,6 +522,7 @@ $('import-form').addEventListener('submit', async (event) => {
     $('import-result').hidden = false;
     await refreshArchive();
     updateInfo();
+    toast('Backup eingelesen');
   } catch (err) {
     $('import-password').value = '';
     if (err instanceof WrongPasswordError) error.textContent = 'Das Passwort passt nicht zu diesem Backup.';
@@ -564,6 +571,7 @@ async function updatePersistStatus() {
 // Start
 // =====================================================================
 async function start() {
+  hydrateIcons();
   if (!window.crypto || !crypto.subtle || !window.indexedDB) {
     showLockView('loading');
     $('lock-loading').textContent = 'Dieser Browser unterstützt keine sichere Verschlüsselung. Bitte nutze Safari über https.';
