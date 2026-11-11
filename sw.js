@@ -2,7 +2,7 @@
 
 // Bei jeder Änderung an den Dateien diese Nummer erhöhen,
 // damit Handys die neue Version laden.
-const CACHE_NAME = 'dokumente-v1';
+const CACHE_NAME = 'dokumente-v2';
 
 // Alle Dateien, die offline verfügbar sein sollen (relative Pfade,
 // damit es auch unter https://<name>.github.io/<repo>/ funktioniert).
@@ -12,10 +12,10 @@ const APP_FILES = [
   './styles.css',
   './app.js',
   './manifest.json',
-  './icons/icon.svg',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/apple-touch-icon.png'
+  './icon.svg',
+  './icon-192.png',
+  './icon-512.png',
+  './apple-touch-icon.png'
 ];
 
 // Installation: Dateien in den Offline-Speicher legen
