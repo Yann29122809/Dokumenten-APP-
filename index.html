@@ -74,6 +74,19 @@
     </form>
   </div>
 
+  <!-- ================= Umstellung des Datenmodells ================= -->
+  <div id="migration-dialog" class="dialog-backdrop" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="migration-title">
+      <span class="dialog-icon" data-icon="sparkle"></span>
+      <h2 id="migration-title">Kurze Umstellung</h2>
+      <p>Die App kann jetzt mehr (bessere Suche, Import, Duplikate). Dafür ergänzt sie einmalig ihre Datenablage. Deine Dokumente bleiben dabei erhalten.</p>
+      <p class="hint">Zur Sicherheit kannst du vorher ein Backup sichern.</p>
+      <p class="success" id="migration-info"></p>
+      <button class="btn-primary with-icon" type="button" id="migration-backup" data-icon="share">Erst Backup sichern</button>
+      <button class="btn-ghost" type="button" id="migration-run">Ohne Backup umstellen</button>
+    </div>
+  </div>
+
   <!-- ================= Eigentliche App ================= -->
   <button id="update-banner" class="update-banner" type="button" hidden>
     Neue Version verfügbar – tippen zum Aktualisieren
@@ -86,6 +99,16 @@
   <main class="app-main">
     <!-- Bildschirm 1: Scannen -->
     <section id="screen-scan" class="screen is-active" aria-labelledby="screen-title">
+      <!-- Eingang: importierte Dateien, die noch bestätigt werden müssen -->
+      <div id="inbox-section" class="inbox" hidden>
+        <div class="inbox-title">
+          <h3 class="section-label">Eingang</h3>
+          <span class="hint" id="inbox-count"></span>
+        </div>
+        <div id="inbox-bulk" class="inbox-bulk"></div>
+        <div id="inbox-list"></div>
+      </div>
+
       <!-- Noch keine Seite aufgenommen -->
       <div id="scan-empty" class="scan-hero">
         <div class="hero-card">
@@ -94,7 +117,18 @@
           <p>Foto aufnehmen – die App schneidet zu, liest den Text und schlägt die Ablage vor.</p>
           <button class="btn-primary btn-large with-icon" type="button" id="scan-camera" data-icon="camera">Foto aufnehmen</button>
           <button class="btn-ghost with-icon" type="button" id="scan-library" data-icon="photos">Aus Fotos wählen</button>
+          <button class="btn-ghost with-icon" type="button" data-action="import" data-icon="file">Dateien importieren (PDF, Bilder)</button>
         </div>
+        <details class="help-card card">
+          <summary>So importierst du E-Mail-Anhänge</summary>
+          <ol>
+            <li>In der Mail-App den Anhang antippen und halten.</li>
+            <li><strong>Teilen</strong> → <strong>„In Dateien sichern“</strong> wählen und speichern.</li>
+            <li>Hier auf <strong>„Dateien importieren“</strong> tippen → <strong>„Durchsuchen“</strong> → Datei wählen. Mehrere auf einmal gehen auch.</li>
+          </ol>
+          <p class="hint">Die Datei landet im Eingang. Dort prüfst du Titel, Ordner und Datum und bestätigst. Danach kannst du sie in „Dateien“ wieder löschen.</p>
+        </details>
+        <div id="soon-section" hidden></div>
         <h3 class="section-label">Tipps für gute Scans</h3>
         <ul class="tips card">
           <li><span data-icon="file"></span>Helles Papier auf dunklem Untergrund</li>
@@ -133,9 +167,8 @@
           <label>Notiz (optional)
             <textarea id="doc-note" rows="2" maxlength="1000"></textarea>
           </label>
-          <label>Frist / Erinnerung (optional)
-            <input type="date" id="doc-due">
-          </label>
+          <div id="reminder-suggestion-slot"></div>
+          <div id="reminder-slot"></div>
           <p class="error" id="scan-error" role="alert"></p>
           <button class="btn-primary" type="submit" id="scan-save">Verschlüsselt speichern</button>
           <button class="btn-text danger" type="button" id="scan-discard">Verwerfen</button>
@@ -146,6 +179,7 @@
 
       <input class="sr-only" type="file" id="input-camera" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
       <input class="sr-only" type="file" id="input-library" accept="image/*" multiple tabindex="-1" aria-hidden="true">
+      <input class="sr-only" type="file" id="input-import" accept="application/pdf,.pdf,image/jpeg,image/png,image/webp,image/heic,image/heif,.heic,.heif" multiple tabindex="-1" aria-hidden="true">
     </section>
 
     <!-- Bildschirm 2: Ablage -->
@@ -220,6 +254,18 @@
             <input type="checkbox" class="switch" id="ocr-toggle" checked>
           </label>
           <label class="settings-row">
+            <span>Sprachen</span>
+            <select id="ocr-lang">
+              <option value="deu">Deutsch</option>
+              <option value="deu+fra">Deutsch + Französisch</option>
+              <option value="deu+eng">Deutsch + Englisch</option>
+              <option value="deu+fra+eng">Alle drei</option>
+            </select>
+          </label>
+          <button class="settings-row" type="button" id="ocr-backfill">
+            <span>Text älterer Dokumente erkennen</span><span class="hint" id="ocr-queue-status"></span>
+          </button>
+          <label class="settings-row">
             <span>Kalender-Einträge</span>
             <select id="calendar-select">
               <option value="neutral">Neutral</option>
@@ -228,7 +274,22 @@
           </label>
         </div>
         <p class="group-note">„Neutral“ schreibt nur „Frist – Dokumente-App“ in den Kalender. Dein Kalender ist nicht verschlüsselt – mit „Mit Titel“ steht dort z.&nbsp;B. „Frist: Rechnung Stadtwerke“.</p>
+        <p class="group-note">Die Erkennung läuft nach dem Speichern im Hintergrund weiter, Seite für Seite – nur solange die App geöffnet ist. Wird sie geschlossen, geht es beim nächsten Öffnen weiter. Französisch lädt einmalig 0,7&nbsp;MB, Englisch 3&nbsp;MB.</p>
         <p class="group-note">Liest beim Scannen den Text und schlägt Ablageort, Datum, Titel und Notiz vor. Läuft komplett auf diesem iPhone – deine Dokumente werden nirgendwohin geschickt. Beim ersten Mal werden ca. 5&nbsp;MB Programm und Sprachdaten geladen (Internet nötig), danach geht es auch offline.</p>
+      </div>
+
+      <div class="settings-group">
+        <h2>Aufräumen</h2>
+        <div class="card">
+          <button class="settings-row" type="button" id="dup-scan">
+            <span>Duplikate suchen</span><span class="hint" id="dup-status"></span>
+          </button>
+          <button class="settings-row" type="button" id="trash-toggle" aria-expanded="false">
+            <span>Papierkorb</span><span class="hint" id="trash-count">leer</span>
+          </button>
+          <div id="trash-list" hidden></div>
+        </div>
+        <p class="group-note">Gelöschte Dokumente bleiben 30 Tage im Papierkorb und können zurückgeholt werden. Beim Speichern prüft die App automatisch, ob es das Dokument schon gibt.</p>
       </div>
 
       <div class="settings-group" id="backup-group">
@@ -266,7 +327,7 @@
       <div class="settings-group">
         <h2>Info</h2>
         <div class="card">
-          <div class="settings-row"><span>Version</span><span class="hint">0.6.0</span></div>
+          <div class="settings-row"><span>Version</span><span class="hint">1.0.0</span></div>
           <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
           <div class="settings-row"><span>Dokumente</span><span class="hint" id="doc-count">–</span></div>
           <div class="settings-row"><span>Belegter Speicher</span><span class="hint" id="storage-used">–</span></div>

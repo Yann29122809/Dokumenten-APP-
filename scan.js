@@ -3,15 +3,16 @@
 
 import { el, todayISO, formatDate, toast } from './dom.js';
 import { icon } from './icons.js';
-import { prepareImage, renderPage, makeThumb } from './images.js';
+import { prepareImage, renderPage, makeThumb, loadImage } from './images.js';
 import { saveDocument } from './docs.js';
 import {
   fillFolderSelect, folderLabel, folderSingular, existingFolderId, askAndCreateFolder, onFoldersChanged, allFolders
 } from './folders.js';
-import { recognizeText } from './ocr.js';
+import { recognizePage } from './ocr.js';
 import { detectDocument, warpImage, fullQuad } from './crop.js';
 import { openCropper } from './cropper.js';
 import { suggestFromText } from './suggest.js';
+import { reminderFields, suggestionCard, reminderChanges } from './deadlines.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -26,10 +27,14 @@ let dirty = {};      // Felder, die du selbst geändert hast, werden nicht über
 let suggestion = null;
 let lastFolderId = 'invoice';
 
-const FIELDS = { category: 'doc-category', title: 'doc-title', date: 'doc-date', note: 'doc-note', dueDate: 'doc-due' };
+const FIELDS = { category: 'doc-category', title: 'doc-title', date: 'doc-date', note: 'doc-note' };
+let reminder = null;          // Eingabefelder der Erinnerung
+let reminderDismissed = false; // Vorschlag abgelehnt
 
 export function initScan(context) {
   ctx = context;
+  reminder = reminderFields(null);
+  $('reminder-slot').replaceChildren(reminder.node);
   $('doc-date').value = todayISO();
 
   const pick = (inputId) => () => {
@@ -246,9 +251,12 @@ function startOcr() {
       renderOcrStatus();
       try {
         const image = await renderPage(page.blob, rotation, true);
-        const text = await recognizeText(image, (p) => { ocrProgress = p; renderOcrStatus(); });
+        const { text, words } = await recognizePage(image, (p) => { ocrProgress = p; renderOcrStatus(); });
+        const dims = await loadImage(image);
         if (myDraft !== draftId) return;
-        if (page.rotation === rotation && pages.includes(page)) page.ocr = { status: 'done', text };
+        if (page.rotation === rotation && pages.includes(page)) {
+          page.ocr = { status: 'done', text, words, w: dims.naturalWidth, h: dims.naturalHeight };
+        }
       } catch (err) {
         console.error(err);
         if (myDraft !== draftId) return;
@@ -334,10 +342,20 @@ function applySuggestion() {
     $('doc-note').value = suggestion.note;
     mark('note');
   }
-  if (suggestion.dueDate && !dirty.dueDate) {
-    $('doc-due').value = suggestion.dueDate;
-    mark('dueDate');
-  }
+  // Erinnerung nur vorschlagen – gesetzt wird sie erst nach „Übernehmen“
+  renderReminderSuggestion();
+}
+
+function renderReminderSuggestion() {
+  const slot = $('reminder-suggestion-slot');
+  const s = suggestion;
+  if (!s || !s.dueDate || reminderDismissed || reminder.isActive()) { slot.replaceChildren(); return; }
+  const proposal = { date: s.dueDate, kind: s.dueKind || 'Zahlung', amount: s.amount || null, lead: [1, 0] };
+  slot.replaceChildren(suggestionCard(proposal, {
+    onAccept: () => { reminder.set(proposal); slot.replaceChildren(); },
+    onEdit: () => { reminder.set(proposal); slot.replaceChildren(); reminder.node.querySelector('input[type=date]').focus(); },
+    onDismiss: () => { reminderDismissed = true; slot.replaceChildren(); }
+  }));
 }
 
 // ---------------------------------------------------------------------
@@ -356,31 +374,60 @@ async function onSave(event) {
   button.disabled = true;
 
   try {
-    // Läuft die Texterkennung noch? Dann kurz warten, damit die Suche den Text kennt.
-    if (ctx.isOcrEnabled() && pages.some((p) => p.ocr.status === 'pending' || p.ocr.status === 'running')) {
-      button.textContent = 'Text wird noch erkannt …';
-      await (ocrRunning || startOcr());
-    }
-
     const date = $('doc-date').value || todayISO();
     const title = $('doc-title').value.trim() || `${folderSingular(category)} ${formatDate(date)}`;
     const note = $('doc-note').value.trim();
-    const text = pages.map((p) => (p.ocr.status === 'done' ? p.ocr.text : '')).join('\n\n').trim();
+    // Fertig erkannte Seiten gleich mitspeichern, die übrigen erledigt die Warteschlange
+    const texts = pages.map((p) => (p.ocr.status === 'done' ? { text: p.ocr.text, words: p.ocr.words, w: p.ocr.w, h: p.ocr.h } : null));
     const sender = suggestion && suggestion.sender ? suggestion.sender : null;
     const filter = $('scan-filter').checked;
-    const dueDate = $('doc-due').value || null;
+    const confirmedReminder = reminder.read();
 
     button.textContent = 'Wird verschlüsselt …';
     const finished = [];
     for (const page of pages) finished.push(await renderPage(page.blob, page.rotation, filter));
     const thumb = await makeThumb(finished[0]);
-    await saveDocument(key, { title, category, date, note, text, sender, dueDate, dueDone: false }, finished, thumb);
+    const meta = { title, category, date, note, sender, ...reminderChanges(confirmedReminder) };
+    const missing = texts.map((t, i) => (t ? null : i)).filter((i) => i !== null);
+    const doSave = async (extraMeta = {}) => {
+      const id = await saveDocument(key, { ...meta, ...extraMeta }, finished, thumb, { texts });
+      await ctx.onSaved(id, texts);
+      if (missing.length && ctx.isOcrEnabled()) ctx.enqueueOcr(id, missing);
+      return id;
+    };
 
+    // Duplikatprüfung vor dem Speichern
+    let check = { decision: 'save', extraMeta: {}, afterSave: () => {} };
+    if (ctx.checkDuplicate) {
+      button.textContent = 'Wird geprüft …';
+      const dims = await loadImage(finished[0]);
+      check = await ctx.checkDuplicate({
+        kind: 'scan',
+        pages: finished.map((blob, i) => (i === 0 ? { blob, width: dims.naturalWidth, height: dims.naturalHeight } : { blob })),
+        texts,
+        meta,
+        sizeBytes: finished.reduce((sum, b) => sum + b.size, 0),
+        // „Rückgängig“ nach „Duplikat“: doch speichern
+        onUndoSkip: async () => { await doSave(check.extraMeta); toast('Doch gespeichert'); }
+      });
+    }
+    if (check.decision === 'later') {
+      setStatus('Noch nicht gespeichert – du kannst den Scan weiter bearbeiten.');
+      return;
+    }
+    if (check.decision === 'skip') {
+      clearScan();
+      setStatus('Nicht gespeichert, weil das Dokument schon vorhanden ist.');
+      return;
+    }
+
+    button.textContent = 'Wird verschlüsselt …';
+    const docId = await doSave(check.extraMeta);
+    await check.afterSave(docId);
     lastFolderId = category;
     clearScan();
     setStatus(`„${title}“ liegt jetzt in ${folderLabel(category)}.`);
-    toast('Verschlüsselt gespeichert');
-    ctx.onSaved();
+    if (!document.querySelector('.toast.has-action.is-visible')) toast('Verschlüsselt gespeichert');
   } catch (err) {
     console.error(err);
     error.textContent = 'Speichern fehlgeschlagen. Ist der Speicher voll?';
@@ -400,6 +447,9 @@ export function clearScan() {
   pages = [];
   dirty = {};
   suggestion = null;
+  reminderDismissed = false;
+  if (reminder) reminder.set(null);
+  $('reminder-suggestion-slot').replaceChildren();
   $('scan-form').reset();
   Object.keys(FIELDS).forEach(unmark);
   $('doc-date').value = todayISO();

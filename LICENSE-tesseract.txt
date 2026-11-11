@@ -203,3 +203,4 @@ https://github.com/naptha/tesseract.js
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+Zusätzliche Sprachdaten: @tesseract.js-data/fra 1.0.0 und @tesseract.js-data/eng 1.0.0 (4.0.0_best_int, Apache License 2.0)

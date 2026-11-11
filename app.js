@@ -4,9 +4,15 @@ import { getMeta, setMeta } from './db.js';
 import { formatBytes, toast } from './dom.js';
 import { hydrateIcons } from './icons.js';
 import { initScan, clearScan } from './scan.js';
-import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs } from './archive.js';
+import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs, pageTextReady, getTrashed, renderTrash, renderSoon, openDoc } from './archive.js';
 import { loadFolders, clearFolders } from './folders.js';
-import { stopOcr } from './ocr.js';
+import { stopOcr, setOcrLanguages } from './ocr.js';
+import { buildIndex, clearSearch, setPageText, hasText, getPageTextsFor } from './search.js';
+import { initOcrQueue, enqueue, kick as kickOcr, pauseQueue, onQueueChange } from './ocrqueue.js';
+import { needsMigration, runMigrations, markSchemaCurrent } from './migrations.js';
+import { initImport, loadInbox, clearInbox } from './importer.js';
+import { initDupCheck, checkBeforeSave, backfillFingerprints, scanAllDuplicates } from './dupcheck.js';
+import { loadDecisions, clearDecisions } from './duplicates.js';
 import { createBackup, saveBackupFile, readBackupFile, importBackup, BackupFormatError } from './backup.js';
 
 const $ = (id) => document.getElementById(id);
@@ -15,7 +21,7 @@ const MIN_PASSWORD_LENGTH = 8;
 // Der entsperrte Schlüssel lebt nur im Arbeitsspeicher, solange die App offen ist.
 let vaultKey = null;
 let vaultRecord = null;
-let settings = { autoLockMinutes: 5, lastBackup: null, ocrAuto: true, autoCrop: true, calendar: 'neutral' };
+let settings = { autoLockMinutes: 5, lastBackup: null, ocrAuto: true, autoCrop: true, calendar: 'neutral', ocrLangs: 'deu' };
 let faceIdRecord = null;
 
 const saveSettings = () => setMeta('settings', settings);
@@ -44,6 +50,7 @@ function showScreen(name) {
   });
   document.querySelector('.app-main').scrollTop = 0;
   if (name === 'archive') showRoot();
+  if (name === 'scan' && vaultKey) updateSoon();
   if (name === 'settings') updateInfo();
 }
 
@@ -93,10 +100,98 @@ async function unlocked(key) {
   try {
     await loadFolders(key);
     await refreshArchive();
+    updateSoon();
+    await buildIndex(key, getDocs());
+    if (await needsMigration()) {
+      if (getDocs().length) showMigrationDialog();
+      else await runMigrations(key);
+    }
+    kickOcr();
+    await loadInbox();
+    await loadDecisions(key);
+    // Fingerabdrücke älterer Dokumente nebenbei nachholen
+    setTimeout(() => backfillFingerprints().catch((err) => console.warn(err)), 3000);
   } catch (err) {
     console.error(err);
   }
 }
+
+// „Bald fällig“ auf der Startseite
+function updateSoon() {
+  renderSoon($('soon-section'), (id) => { showScreen('archive'); openDoc(id); });
+}
+document.addEventListener('dokumente:changed', updateSoon);
+
+// ---------- Umstellung des Datenmodells (mit Backup-Angebot) ----------
+let migrationBackup = null;
+
+function showMigrationDialog() {
+  migrationBackup = null;
+  $('migration-info').textContent = '';
+  $('migration-backup').disabled = false;
+  $('migration-backup').lastChild.textContent = 'Erst Backup sichern';
+  $('migration-run').textContent = 'Ohne Backup umstellen';
+  $('migration-dialog').hidden = false;
+}
+
+async function finishMigration() {
+  const button = $('migration-run');
+  button.disabled = true;
+  button.textContent = 'Wird umgestellt …';
+  try {
+    await runMigrations(vaultKey);
+    await buildIndex(vaultKey, getDocs());
+    $('migration-dialog').hidden = true;
+    toast('Umstellung abgeschlossen');
+  } catch (err) {
+    console.error(err);
+    $('migration-info').textContent = 'Umstellung fehlgeschlagen – deine Daten sind unverändert. Beim nächsten Entsperren wird es erneut versucht.';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$('migration-backup').addEventListener('click', async () => {
+  const button = $('migration-backup');
+  // 1. Tipp: Backup erstellen · 2. Tipp: Datei sichern (iPhone erlaubt Teilen nur direkt nach einem Tipp)
+  if (!migrationBackup) {
+    button.disabled = true;
+    button.lastChild.textContent = 'Backup wird erstellt …';
+    try {
+      migrationBackup = await createBackup(vaultKey);
+      $('migration-info').textContent = `Backup ist bereit (${formatBytes(migrationBackup.blob.size)}). Jetzt sichern, z. B. in „Dateien“.`;
+      button.lastChild.textContent = 'Backup-Datei sichern …';
+    } catch (err) {
+      console.error(err);
+      $('migration-info').textContent = 'Backup konnte nicht erstellt werden.';
+      button.lastChild.textContent = 'Erst Backup sichern';
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  suspendAutoLock();
+  try {
+    const result = await saveBackupFile(migrationBackup);
+    if (result !== 'cancelled') {
+      settings.lastBackup = Date.now();
+      await saveSettings();
+      $('migration-info').textContent = 'Backup gesichert. Jetzt kannst du umstellen.';
+      $('migration-run').textContent = 'Jetzt umstellen';
+      button.disabled = true;
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    resumeAutoLock();
+  }
+});
+
+$('migration-run').addEventListener('click', async () => {
+  const backedUp = $('migration-backup').disabled && migrationBackup !== null;
+  if (!backedUp && !confirm('Ohne Backup umstellen?\n\nDie Umstellung ändert keine bestehenden Daten – ein Backup ist aber immer die sicherste Wahl.')) return;
+  await finishMigration();
+});
 
 function lock() {
   if (!vaultRecord) return;
@@ -105,7 +200,16 @@ function lock() {
   clearScan();
   clearArchive();
   clearFolders();
+  clearSearch();
+  clearInbox();
+  clearDecisions();
+  $('soon-section').hidden = true;
+  $('soon-section').replaceChildren();
+  document.querySelectorAll('.dup-overlay').forEach((n) => n.remove());
+  $('trash-list').hidden = true;
+  pauseQueue();
   stopOcr();
+  $('migration-dialog').hidden = true;
   resetBackupUi();
   clearPasswordFields();
   $('unlock-error').textContent = '';
@@ -137,6 +241,7 @@ $('setup-form').addEventListener('submit', async (event) => {
   try {
     const { record, key } = await createVault(pw1);
     await setMeta('vault', record);
+    await markSchemaCurrent();
     await saveSettings();
     vaultRecord = record;
     await requestPersistentStorage();
@@ -317,6 +422,17 @@ const isOcrEnabled = () => settings.ocrAuto !== false;
 const isAutoCropEnabled = () => settings.autoCrop !== false;
 const calendarWithTitle = () => settings.calendar === 'title';
 
+// Texterkennung im Hintergrund (dauerhafte Warteschlange)
+initOcrQueue({
+  getKey: () => vaultKey,
+  isEnabled: isOcrEnabled,
+  onPageDone: (docId, index, text) => {
+    setPageText(docId, index, text);
+    pageTextReady(docId);
+  }
+});
+onQueueChange(() => updateQueueStatus());
+
 initScan({
   getKey: () => vaultKey,
   suspendAutoLock,
@@ -324,7 +440,43 @@ initScan({
   isOcrEnabled,
   isAutoCropEnabled,
   getDocs,
-  onSaved: () => refreshArchive().catch((err) => console.error(err))
+  enqueueOcr: enqueue,
+  checkDuplicate: checkBeforeSave,
+  onSaved: async (docId, texts) => {
+    try {
+      await refreshArchive();
+      (texts || []).forEach((t, i) => { if (t) setPageText(docId, i, t.text); });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+});
+
+// Duplikate
+initDupCheck({
+  getKey: () => vaultKey,
+  getDocs,
+  getPageTexts: getPageTextsFor,
+  refresh: () => refreshArchive()
+});
+
+// Import (Eingang)
+initImport({
+  checkDuplicate: checkBeforeSave,
+  getKey: () => vaultKey,
+  suspendAutoLock,
+  resumeAutoLock,
+  isOcrEnabled,
+  getDocs,
+  enqueueOcr: enqueue,
+  onImported: async (docId, texts) => {
+    try {
+      await refreshArchive();
+      (texts || []).forEach((t, i) => { if (t) setPageText(docId, i, t.text); });
+    } catch (err) {
+      console.error(err);
+    }
+  }
 });
 
 initArchive({
@@ -332,6 +484,7 @@ initArchive({
   suspendAutoLock,
   resumeAutoLock,
   isOcrEnabled,
+  enqueueOcr: enqueue,
   calendarWithTitle,
   getLastBackup: () => settings.lastBackup,
   goToBackup: () => {
@@ -358,7 +511,59 @@ $('calendar-select').addEventListener('change', async (event) => {
 $('ocr-toggle').addEventListener('change', async (event) => {
   settings.ocrAuto = event.target.checked;
   await saveSettings();
+  if (settings.ocrAuto) kickOcr();
 });
+
+$('ocr-lang').addEventListener('change', async (event) => {
+  settings.ocrLangs = event.target.value;
+  setOcrLanguages(settings.ocrLangs);
+  await saveSettings();
+  toast('Sprachen geändert');
+});
+
+// Ältere Dokumente ohne Text in die Warteschlange
+$('ocr-backfill').addEventListener('click', async () => {
+  if (!vaultKey) return;
+  const missing = getDocs().filter((d) => !d.meta.trashedAt && !hasText(d.id));
+  if (!missing.length) { toast('Alle Dokumente haben schon Text'); return; }
+  for (const doc of missing) await enqueue(doc.id, Array.from({ length: doc.meta.pageCount }, (_, i) => i));
+  toast(`${missing.length} Dokument(e) vorgemerkt`);
+});
+
+// ---------- Aufräumen: Duplikate und Papierkorb ----------
+let dupRunning = false;
+$('dup-scan').addEventListener('click', async () => {
+  if (!vaultKey || dupRunning) return;
+  dupRunning = true;
+  try {
+    await scanAllDuplicates((text) => { $('dup-status').textContent = text; });
+  } catch (err) {
+    console.error(err);
+    $('dup-status').textContent = 'Fehler bei der Suche';
+  } finally {
+    dupRunning = false;
+    updateTrashUi();
+  }
+});
+
+function updateTrashUi() {
+  const n = getTrashed().length;
+  $('trash-count').textContent = n ? (n === 1 ? '1 Dokument' : `${n} Dokumente`) : 'leer';
+  if (!$('trash-list').hidden) renderTrash($('trash-list'), updateTrashUi);
+}
+
+$('trash-toggle').addEventListener('click', () => {
+  const list = $('trash-list');
+  list.hidden = !list.hidden;
+  $('trash-toggle').setAttribute('aria-expanded', String(!list.hidden));
+  if (!list.hidden) renderTrash(list, updateTrashUi);
+});
+
+async function updateQueueStatus() {
+  const { queueState } = await import('./ocrqueue.js');
+  const q = queueState();
+  $('ocr-queue-status').textContent = q.pending ? `${q.pending} in Arbeit` : q.errors ? `${q.errors} Fehler` : '';
+}
 
 $('autolock-select').addEventListener('change', async (event) => {
   settings.autoLockMinutes = Number(event.target.value);
@@ -541,6 +746,7 @@ async function updateInfo() {
     ? new Date(settings.lastBackup).toLocaleDateString('de-DE')
     : 'noch nie';
   $('doc-count').textContent = String(documentCount());
+  updateTrashUi();
   if (navigator.storage && navigator.storage.estimate) {
     try {
       const { usage } = await navigator.storage.estimate();
@@ -584,6 +790,8 @@ async function start() {
     $('ocr-toggle').checked = isOcrEnabled();
     $('autocrop-toggle').checked = isAutoCropEnabled();
     $('calendar-select').value = settings.calendar === 'title' ? 'title' : 'neutral';
+    $('ocr-lang').value = settings.ocrLangs || 'deu';
+    setOcrLanguages(settings.ocrLangs);
 
     vaultRecord = await getMeta('vault');
     faceIdRecord = vaultRecord ? (await getFaceIdRecord()) || null : null;

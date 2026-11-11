@@ -27,18 +27,31 @@ export function el(tag, props = {}, ...children) {
 
 /** Kurze Bestätigung unten am Bildschirm, z. B. „Gespeichert“. */
 let toastTimer = null;
-export function toast(text, kind = 'ok') {
+/**
+ * action: { label: 'Rückgängig', onClick } – dann bleibt die Meldung 5 Sekunden
+ * stehen und hat einen Knopf.
+ */
+export function toast(text, kind = 'ok', action = null) {
   let node = document.getElementById('toast');
   if (!node) {
     node = el('div', { id: 'toast', class: 'toast', role: 'status', 'aria-live': 'polite' });
     document.body.append(node);
   }
-  node.textContent = text;
-  node.className = `toast is-${kind}`;
-  // erst im nächsten Bild einblenden, damit die Animation läuft
-  requestAnimationFrame(() => node.classList.add('is-visible'));
+  node.replaceChildren(el('span', { text }));
+  node.className = `toast is-${kind}${action ? ' has-action' : ''}`;
+  if (action) {
+    node.append(el('button', { type: 'button', class: 'toast-action', text: action.label, onclick: () => {
+      node.classList.remove('is-visible');
+      clearTimeout(toastTimer);
+      action.onClick();
+    } }));
+  }
+  // erst im nächsten Bild einblenden, damit die Animation läuft (mit Ersatz, falls kein Bild-Takt)
+  const showIt = () => node.classList.add('is-visible');
+  requestAnimationFrame(showIt);
+  setTimeout(showIt, 50);
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => node.classList.remove('is-visible'), 2600);
+  toastTimer = setTimeout(() => node.classList.remove('is-visible'), action ? 5000 : 2600);
 }
 
 /** Heutiges Datum als JJJJ-MM-TT (Ortszeit). */

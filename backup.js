@@ -55,7 +55,20 @@ export async function createBackup(key) {
     const meta = await decryptJSON(key, record.meta); // nur um die Seitenzahl zu kennen
     const pages = await db.getPages(record.id, meta.pageCount);
     if (pages.some((p) => !p)) throw new Error(`Seiten von „${meta.title}“ fehlen`);
-    entries.push({ id: record.id, meta: addBox(record.meta), thumb: addBox(record.thumb), pages: pages.map(addBox) });
+    // Ab Version 3: erkannter Text, Wortpositionen und Originaldatei (alles weiterhin verschlüsselt)
+    const texts = await db.getPageTexts(record.id, meta.pageCount);
+    const words = [];
+    for (let i = 0; i < meta.pageCount; i++) words.push(await db.getPageWords(record.id, i));
+    const file = await db.getFile(record.id);
+    entries.push({
+      id: record.id,
+      meta: addBox(record.meta),
+      thumb: addBox(record.thumb),
+      pages: pages.map(addBox),
+      texts: texts.map((b) => (b ? addBox(b) : null)),
+      words: words.map((b) => (b ? addBox(b) : null)),
+      file: file ? { data: addBox(file), info: addBox(file.info) } : null
+    });
   }
 
   // Eigene Ablageorte (verschlüsselt) mitsichern
@@ -63,7 +76,7 @@ export async function createBackup(key) {
 
   const header = {
     format: FORMAT,
-    version: 2,
+    version: 3,
     folders: foldersBox ? addBox(foldersBox) : null,
     created: new Date().toISOString(),
     vault: {
@@ -128,7 +141,7 @@ export async function readBackupFile(file) {
   } catch {
     throw new BackupFormatError('Die Backup-Datei ist beschädigt.');
   }
-  if (header.format !== FORMAT || ![1, 2].includes(header.version) || !Array.isArray(header.docs)) {
+  if (header.format !== FORMAT || ![1, 2, 3].includes(header.version) || !Array.isArray(header.docs)) {
     throw new BackupFormatError('Diese Backup-Version wird nicht unterstützt.');
   }
   return { header, body: bytes.subarray(12 + headerLength) };
@@ -172,12 +185,20 @@ export async function importBackup(currentKey, backup, backupPassword, onProgres
     const pages = [];
     for (const ref of entry.pages) pages.push(await encryptBytes(currentKey, await decryptBytes(backupKey, box(ref))));
 
+    const reencrypt = async (ref) => (ref ? encryptBytes(currentKey, await decryptBytes(backupKey, box(ref))) : null);
+    const texts = [];
+    const words = [];
+    for (const ref of entry.texts || []) texts.push(await reencrypt(ref));
+    for (const ref of entry.words || []) words.push(await reencrypt(ref));
+    let file = null;
+    if (entry.file) file = { ...(await reencrypt(entry.file.data)), info: await reencrypt(entry.file.info) };
+
     await db.putDocWithPages({
       id: entry.id,
       v: 1,
       meta: await encryptJSON(currentKey, { ...meta, pageCount: pages.length }),
       thumb: await encryptBytes(currentKey, thumb)
-    }, pages);
+    }, pages, { texts, words, file });
     imported++;
   }
   return { imported, skipped, foldersAdded };

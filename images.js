@@ -1,6 +1,6 @@
 // Bildverarbeitung: verkleinern, drehen, Scan-Filter, Vorschaubilder.
 
-export const MAX_EDGE = 2200;    // längste Seite in Pixeln (gut lesbar, nicht zu groß)
+export const MAX_EDGE = 2000;    // längste Seite in Pixeln (gut lesbar, nicht zu groß)
 const JPEG_QUALITY = 0.82;
 const THUMB_EDGE = 320;
 

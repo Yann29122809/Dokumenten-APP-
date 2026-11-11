@@ -3,23 +3,24 @@
 
 import { el, formatDate, toast } from './dom.js';
 import { icon } from './icons.js';
-import { listDocuments, loadThumb, loadPages, updateMeta, deleteDocument } from './docs.js';
+import { listDocuments, loadThumb, loadPages, updateMeta, deleteDocument, loadPageWords, loadOriginal, moveToTrash, restoreFromTrash, purgeTrash, TRASH_DAYS } from './docs.js';
+import { search as runSearch, setDocs as setSearchDocs, getPageTextsFor, hasText, fold, recentSearches, rememberSearch } from './search.js';
+import { onQueueChange, queueState, cancelAll as cancelOcr, retryAll as retryOcr } from './ocrqueue.js';
 import {
   childFolders, folderById, folderPath, folderLabel, folderColor, descendantIds, existingFolderId,
   createFolder, renameFolder, deleteFolder, fillFolderSelect, askAndCreateFolder, onFoldersChanged
 } from './folders.js';
 import { imagesToPdf } from './makepdf.js';
-import { recognizeText } from './ocr.js';
-import { renderPage } from './images.js';
-import { suggestFromText } from './suggest.js';
-import { openDeadlines, dueLabel, dueClass, openInCalendar, shareCalendarFile } from './deadlines.js';
+import { openDeadlines, dueLabel, dueClass, openInCalendar, shareCalendarFile, reminderOf, reminderChanges, reminderFields, suggestionCard, LEADS } from './deadlines.js';
 
 const BACKUP_REMINDER_DAYS = 30;
 
 let ctx = null;
-let docs = [];
+let docs = [];        // ohne Papierkorb
+let trashed = [];     // im Papierkorb
 let view = { name: 'root' };
 let query = '';
+let searchFilter = { folder: '', period: '' };
 let objectUrls = [];
 let renderId = 0;   // verhindert, dass alte, langsame Ladevorgänge Neues überschreiben
 let currentPdf = null;
@@ -43,13 +44,19 @@ function releaseUrls() {
 export function initArchive(context) {
   ctx = context;
   onFoldersChanged(() => { if (ctx.getKey() && view.name !== 'detail') render(); });
+  onQueueChange(() => updateQueueChip());
 }
 
 /** Dokumente neu einlesen und aktuelle Ansicht zeichnen. */
 export async function refreshArchive() {
   const key = ctx.getKey();
   if (!key) return;
-  docs = await listDocuments(key);
+  const all = await listDocuments(key);
+  // Älter als 30 Tage im Papierkorb → endgültig löschen
+  if (await purgeTrash(all)) return refreshArchive();
+  docs = all.filter((d) => !d.meta.trashedAt);
+  trashed = all.filter((d) => d.meta.trashedAt).sort((a, b) => b.meta.trashedAt - a.meta.trashedAt);
+  setSearchDocs(docs);
   if (view.name === 'detail' && !docs.some((d) => d.id === view.id)) view = { name: 'root' };
   if (view.name === 'folder' && !folderById(view.id)) view = { name: 'root' };
   render();
@@ -61,9 +68,15 @@ export function showRoot() {
   render();
 }
 
+/** Text einer Seite wurde im Hintergrund erkannt. */
+export function pageTextReady(docId) {
+  if (view.name === 'detail' && view.id === docId) render();
+}
+
 export function clearArchive() {
   releaseUrls();
   docs = [];
+  trashed = [];
   query = '';
   view = { name: 'root' };
   root().replaceChildren();
@@ -71,6 +84,70 @@ export function clearArchive() {
 
 export const documentCount = () => docs.length;
 export const getDocs = () => docs;
+export const getTrashed = () => trashed;
+
+/** Dokument direkt öffnen (z. B. aus „Bald fällig“ auf der Startseite). */
+export function openDoc(id) {
+  go({ name: 'detail', id, back: { name: 'root' } });
+}
+
+/** Liste „Bald fällig“ (offene Erinnerungen, überfällige zuerst und rot). */
+export function renderSoon(container, onOpen) {
+  const open = openDeadlines(docs);
+  container.hidden = !open.length;
+  if (!open.length) { container.replaceChildren(); return; }
+  container.replaceChildren(
+    el('h3', { class: 'section-label', text: 'Bald fällig' }),
+    el('div', { class: 'card' }, open.slice(0, 5).map((doc) => {
+      const r = reminderOf(doc.meta);
+      return el('button', { type: 'button', class: 'list-row', onclick: () => onOpen(doc.id) },
+        el('span', { class: `due-icon ${dueClass(r.date)}` }, icon('clock')),
+        el('span', { class: 'grow' },
+          el('span', { class: 'row-title', text: doc.meta.title }),
+          el('span', { class: `row-sub due ${dueClass(r.date)}`, text: [r.kind, dueLabel(r.date), r.amount].filter(Boolean).join(' · ') })
+        ),
+        icon('right', 'icon chevron-icon'));
+    })),
+    open.length > 5 ? el('p', { class: 'hint', text: `… und ${open.length - 5} weitere in der Ablage` }) : ''
+  );
+}
+
+/** Papierkorb-Liste (in den Einstellungen). */
+export function renderTrash(container, onChange) {
+  if (!trashed.length) {
+    container.replaceChildren(el('p', { class: 'hint inline-form', text: 'Der Papierkorb ist leer.' }));
+    return;
+  }
+  const days = (d) => Math.max(0, TRASH_DAYS - Math.floor((Date.now() - d.meta.trashedAt) / 86400000));
+  container.replaceChildren(
+    ...trashed.map((doc) => el('div', { class: 'trash-row' },
+      el('span', { class: 'doc-text' },
+        el('span', { class: 'doc-title', text: doc.meta.title }),
+        el('span', { class: 'doc-sub', text: `${folderLabel(existingFolderId(doc.meta.category))} · wird in ${days(doc)} Tagen gelöscht` })
+      ),
+      el('button', { type: 'button', class: 'btn-text', text: 'Zurückholen', onclick: async () => {
+        await restoreFromTrash(ctx.getKey(), doc);
+        await refreshArchive();
+        toast('Wiederhergestellt');
+        onChange();
+      } }),
+      el('button', { type: 'button', class: 'btn-text danger', text: 'Löschen', onclick: async () => {
+        if (!confirm(`„${doc.meta.title}“ endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+        await deleteDocument(doc);
+        await refreshArchive();
+        toast('Endgültig gelöscht');
+        onChange();
+      } })
+    )),
+    el('button', { type: 'button', class: 'btn-text danger inline-form', text: 'Papierkorb leeren', onclick: async () => {
+      if (!confirm(`${trashed.length} Dokument(e) endgültig löschen? Das kann nicht rückgängig gemacht werden.`)) return;
+      for (const doc of [...trashed]) await deleteDocument(doc);
+      await refreshArchive();
+      toast('Papierkorb geleert');
+      onChange();
+    } })
+  );
+}
 
 function go(newView) {
   view = newView;
@@ -85,6 +162,8 @@ function render() {
   else if (view.name === 'all') renderAll();
   else if (view.name === 'detail') renderDetail(view.id);
   else renderRoot();
+  // Startseite („Bald fällig“) aktualisieren
+  document.dispatchEvent(new Event('dokumente:changed'));
 }
 
 // ---------------------------------------------------------------------
@@ -134,11 +213,12 @@ function thumbImg(doc) {
 
 /** Dokument als Karte mit großem Vorschaubild */
 function docCard(doc, showFolder, backView) {
-  const due = doc.meta.dueDate && !doc.meta.dueDone;
+  const rem = reminderOf(doc.meta);
+  const due = rem && !rem.done;
   return el('button', { type: 'button', class: 'doc-card', onclick: () => go({ name: 'detail', id: doc.id, back: backView }) },
     el('span', { class: 'doc-card-thumb' },
       thumbImg(doc),
-      due ? el('span', { class: `due-badge ${dueClass(doc.meta.dueDate)}` }, icon('clock'), dueLabel(doc.meta.dueDate)) : null,
+      due ? el('span', { class: `due-badge ${dueClass(rem.date)}` }, icon('clock'), dueLabel(rem.date)) : null,
       doc.meta.pageCount > 1 ? el('span', { class: 'pages-badge', text: String(doc.meta.pageCount) }) : null
     ),
     el('span', { class: 'doc-card-title', text: doc.meta.title }),
@@ -184,25 +264,55 @@ function renderRoot() {
   const results = el('div', { id: 'search-results' });
   const folderList = el('div', {});
   const search = el('input', {
-    type: 'search', class: 'search-input', placeholder: 'Titel, Text, Absender, Datum …',
+    type: 'search', class: 'search-input', placeholder: 'Titel, Text, Absender, Betrag, Datum …',
     'aria-label': 'Dokumente durchsuchen', value: query, autocomplete: 'off', enterkeyhint: 'search'
   });
   const searchBox = el('label', { class: 'search-box' }, icon('search'), search);
 
+  // Filter: Ordner (inkl. Unterordner) und Zeitraum
+  const folderSelect = el('select', { class: 'filter-select', 'aria-label': 'Ordner' },
+    el('option', { value: '', text: 'Alle Ordner' }),
+    ...flatFolders().map((f) => el('option', { value: f.id, text: f.label, selected: f.id === searchFilter.folder }))
+  );
+  const year = new Date().getFullYear();
+  const periodSelect = el('select', { class: 'filter-select', 'aria-label': 'Zeitraum' },
+    ...[['', 'Jeder Zeitraum'], ['30', 'Letzte 30 Tage'], ['365', 'Letzte 12 Monate'], [`y${year}`, String(year)], [`y${year - 1}`, String(year - 1)], ['older', `Vor ${year - 1}`]]
+      .map(([v, t]) => el('option', { value: v, text: t, selected: v === searchFilter.period }))
+  );
+  const filters = el('div', { class: 'search-filters' }, folderSelect, periodSelect);
+  const recent = el('div', { class: 'recent-searches' });
+
+  const showRecent = () => {
+    const items = recentSearches();
+    recent.hidden = Boolean(search.value.trim()) || !items.length;
+    recent.replaceChildren(
+      el('span', { class: 'hint', text: 'Zuletzt gesucht' }),
+      ...items.map((q) => el('button', { type: 'button', class: 'chip', text: q, onclick: () => { search.value = q; update(); } }))
+    );
+  };
+
   const update = () => {
     query = search.value;
-    const hits = searchDocs(query);
-    folderList.hidden = Boolean(query.trim());
-    if (!query.trim()) { results.replaceChildren(); return; }
+    searchFilter = { folder: folderSelect.value, period: periodSelect.value };
+    const active = Boolean(query.trim());
+    folderList.hidden = active;
+    filters.hidden = !active;
+    showRecent();
+    if (!active) { results.replaceChildren(); return; }
     renderId++;
     releaseUrls();
+    const hits = runSearch(query, buildFilter());
     results.replaceChildren(
       el('p', { class: 'hint', text: hits.length === 1 ? '1 Treffer' : `${hits.length} Treffer` }),
-      hits.length ? el('div', { class: 'card' }, hits.slice(0, 100).map((d) => docRow(d, true, { name: 'root' }))) : ''
+      hits.length ? el('div', { class: 'card' }, hits.slice(0, 60).map((h) => searchRow(h))) : el('p', { class: 'hint center', text: 'Nichts gefunden. Tipp: weniger oder kürzere Wörter versuchen.' })
     );
   };
   search.addEventListener('input', update);
-  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') search.blur(); });
+  search.addEventListener('focus', showRecent);
+  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') { search.blur(); rememberSearch(ctx.getKey(), search.value); } });
+  search.addEventListener('change', () => rememberSearch(ctx.getKey(), search.value));
+  folderSelect.addEventListener('change', update);
+  periodSelect.addEventListener('change', update);
 
   const roots = childFolders(null);
   folderList.append(
@@ -227,33 +337,102 @@ function renderRoot() {
     docs.length ? '' : el('p', { class: 'hint center', text: 'Noch keine Dokumente abgelegt. Scanne dein erstes Dokument unter „Scannen“.' })
   );
 
-  show(searchBox, results, folderList);
+  show(queueChip(), searchBox, recent, filters, results, folderList);
+  filters.hidden = !query.trim();
+  showRecent();
   if (query) update();
 }
 
-const fold = (text) => (text || '').toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/\p{M}/gu, '');
+function flatFolders() {
+  const out = [];
+  const walk = (parentId, depth) => {
+    for (const f of childFolders(parentId)) {
+      out.push({ id: f.id, label: `${'  '.repeat(depth)}${f.name}` });
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return out;
+}
 
-function searchDocs(q) {
-  const terms = fold(q).split(/\s+/).filter(Boolean);
-  if (!terms.length) return [];
-  return docs.filter((d) => {
-    const m = d.meta;
-    const hay = fold([m.title, m.note, m.text, m.sender, folderLabel(existingFolderId(m.category)), formatDate(m.date), m.date].join(' \n '));
-    return terms.every((t) => hay.includes(t));
-  });
+function buildFilter() {
+  const f = {};
+  if (searchFilter.folder) f.folderIds = new Set(descendantIds(searchFilter.folder));
+  const p = searchFilter.period;
+  const iso = (d) => d.toISOString().slice(0, 10);
+  if (p === '30' || p === '365') f.from = iso(new Date(Date.now() - Number(p) * 86400000));
+  else if (p && p.startsWith('y')) { f.from = `${p.slice(1)}-01-01`; f.to = `${p.slice(1)}-12-31`; }
+  else if (p === 'older') f.to = `${new Date().getFullYear() - 2}-12-31`;
+  return f;
+}
+
+/** Ein Suchtreffer mit Vorschaubild, Ordner und Textausschnitt. */
+function searchRow(hit) {
+  const { doc, snippet } = hit;
+  return el('button', { type: 'button', class: 'doc-row search-hit', onclick: () => {
+    rememberSearch(ctx.getKey(), query);
+    go({ name: 'detail', id: doc.id, back: { name: 'root' }, page: hit.page, terms: hit.terms });
+  } },
+    el('span', { class: 'thumb-box' }, thumbImg(doc)),
+    el('span', { class: 'doc-text' },
+      el('span', { class: 'doc-title', text: doc.meta.title }),
+      el('span', { class: 'doc-sub', text: [folderLabel(existingFolderId(doc.meta.category)), formatDate(doc.meta.date)].join(' · ') }),
+      snippet ? el('span', { class: 'snippet' }, snippet.before, el('mark', { text: snippet.hit }), snippet.after,
+        doc.meta.pageCount > 1 ? el('span', { class: 'snippet-page', text: ` · Seite ${hit.page + 1}` }) : null) : null
+    ),
+    icon('right', 'icon chevron-icon')
+  );
+}
+
+/** Kleiner Hinweis, solange die Texterkennung im Hintergrund arbeitet. */
+function queueChip() {
+  const chip = el('div', { id: 'queue-chip', class: 'queue-chip', role: 'status' });
+  fillQueueChip(chip);
+  return chip;
+}
+
+function updateQueueChip() {
+  const chip = document.getElementById('queue-chip');
+  if (chip) fillQueueChip(chip);
+}
+
+function fillQueueChip(chip) {
+  const q = queueState();
+  if (q.pending > 0 || q.running) {
+    const total = Math.max(q.total, q.pending + q.done);
+    const nr = Math.min(total, q.done + 1);
+    chip.hidden = false;
+    chip.className = 'queue-chip';
+    chip.replaceChildren(
+      el('span', { class: 'spinner', 'aria-hidden': 'true' }),
+      el('span', { class: 'grow', text: q.loading ? 'Texterkennung wird geladen …' : `Text wird erkannt: Seite ${nr} von ${total}${q.progress ? ` (${Math.round(q.progress * 100)} %)` : ''}` }),
+      el('button', { type: 'button', class: 'btn-text', text: 'Abbrechen', onclick: () => cancelOcr() })
+    );
+  } else if (q.errors > 0 || q.cancelled > 0) {
+    const n = q.errors + q.cancelled;
+    chip.hidden = false;
+    chip.className = 'queue-chip is-error';
+    chip.replaceChildren(
+      el('span', { class: 'grow', text: `${n === 1 ? '1 Seite' : `${n} Seiten`} ohne Text${q.errors ? ' (Fehler)' : ' (abgebrochen)'}` }),
+      el('button', { type: 'button', class: 'btn-text', text: 'Wiederholen', onclick: () => retryOcr() })
+    );
+  } else {
+    chip.hidden = true;
+    chip.replaceChildren();
+  }
 }
 
 function deadlinesCard() {
   const open = openDeadlines(docs);
   if (!open.length) return null;
   return el('div', {},
-    el('h3', { class: 'section-label', text: 'Fristen' }),
+    el('h3', { class: 'section-label', text: 'Bald fällig' }),
     el('div', { class: 'card' }, open.slice(0, 8).map((doc) =>
       el('button', { type: 'button', class: 'list-row', onclick: () => go({ name: 'detail', id: doc.id, back: { name: 'root' } }) },
-        el('span', { class: `due-icon ${dueClass(doc.meta.dueDate)}` }, icon('clock')),
+        el('span', { class: `due-icon ${dueClass(reminderOf(doc.meta).date)}` }, icon('clock')),
         el('span', { class: 'grow' },
           el('span', { class: 'row-title', text: doc.meta.title }),
-          el('span', { class: `row-sub due ${dueClass(doc.meta.dueDate)}`, text: dueLabel(doc.meta.dueDate) })
+          el('span', { class: `row-sub due ${dueClass(reminderOf(doc.meta).date)}`, text: `${reminderOf(doc.meta).kind} · ${dueLabel(reminderOf(doc.meta).date)}` })
         ),
         icon('right', 'icon chevron-icon')
       )
@@ -363,14 +542,29 @@ function renderDetail(id) {
   shareBtn.disabled = true;
   let pageBlobs = [];
 
+  const target = view.page || 0;
+  const terms = view.terms || null;
   loadPages(key, doc).then(async (blobs) => {
     if (myRender !== renderId) return;
     pageBlobs = blobs;
-    pagesBox.replaceChildren(...blobs.map((blob, i) =>
-      el('img', { class: 'page-img', src: trackUrl(blob), alt: `Seite ${i + 1} von ${blobs.length}` })
-    ));
-    // PDF gleich vorbereiten – das iPhone öffnet „Teilen“ nur direkt nach dem Antippen
-    const pdf = await imagesToPdf(blobs, doc.meta.title);
+    const wraps = blobs.map((blob, i) =>
+      el('div', { class: 'page-wrap', id: `page-${i}` },
+        el('img', { class: 'page-img', src: trackUrl(blob), alt: `Seite ${i + 1} von ${blobs.length}` }))
+    );
+    pagesBox.replaceChildren(...wraps);
+    // Von der Suche gekommen: zur richtigen Seite springen und das Wort markieren
+    if (terms) {
+      highlightWords(doc, target, terms, wraps[target], myRender);
+      setTimeout(() => wraps[target] && wraps[target].scrollIntoView({ block: 'start', behavior: 'smooth' }), 150);
+    }
+    // PDF gleich vorbereiten – das iPhone öffnet „Teilen“ nur direkt nach dem Antippen.
+    // Importierte PDFs werden unverändert im Original geteilt.
+    let pdf = null;
+    if (doc.meta.source === 'import') {
+      const original = await loadOriginal(key, doc).catch(() => null);
+      if (original && original.type === 'application/pdf') pdf = original.blob;
+    }
+    if (!pdf) pdf = await imagesToPdf(blobs, doc.meta.title);
     if (myRender !== renderId) return;
     currentPdf = pdf;
     shareBtn.disabled = false;
@@ -379,9 +573,15 @@ function renderDetail(id) {
     if (myRender === renderId) pagesBox.replaceChildren(el('p', { class: 'error', text: 'Seiten konnten nicht geladen werden.' }));
   });
 
-  const hasText = Boolean(doc.meta.text && doc.meta.text.trim());
-  const ocrBtn = !hasText && ctx.isOcrEnabled()
-    ? el('button', { type: 'button', class: 'btn-text with-icon', onclick: (e) => recognizeLater(doc, pageBlobs, e.currentTarget) }, icon('text'), 'Text erkennen (für die Suche)')
+  const pageTextList = getPageTextsFor(doc.id);
+  const withText = hasText(doc.id);
+  const queued = queueState().pending > 0;
+  const ocrBtn = !withText && ctx.isOcrEnabled()
+    ? el('button', { type: 'button', class: 'btn-text with-icon', onclick: async (e) => {
+      e.currentTarget.disabled = true;
+      e.currentTarget.textContent = 'Vorgemerkt – Text wird im Hintergrund erkannt';
+      await ctx.enqueueOcr(doc.id, Array.from({ length: doc.meta.pageCount }, (_, i) => i));
+    } }, icon('text'), queued ? 'Text erkennen (wird vorgemerkt)' : 'Text erkennen (für die Suche)')
     : null;
 
   show(
@@ -391,7 +591,7 @@ function renderDetail(id) {
       dot(folderId), ` ${folderLabel(folderId)} · ${formatDate(doc.meta.date)} · ${pagesText(doc.meta.pageCount)}`
     ),
     doc.meta.note ? el('p', { class: 'doc-note', text: doc.meta.note }) : null,
-    doc.meta.dueDate ? dueBox(doc) : null,
+    reminderOf(doc.meta) ? dueBox(doc) : (doc.meta.reminderSuggestion ? reminderSuggestionBox(doc) : null),
     el('div', { class: 'action-bar' },
       actionButton('edit', 'Bearbeiten', () => renderEdit(doc)),
       shareBtn,
@@ -399,20 +599,26 @@ function renderDetail(id) {
     ),
     el('div', { id: 'edit-slot' }),
     pagesBox,
-    hasText
-      ? el('details', { class: 'ocr-text' }, el('summary', { text: 'Erkannter Text' }), el('pre', { text: doc.meta.text }))
+    withText
+      ? el('details', { class: 'ocr-text' }, el('summary', { text: 'Erkannter Text' }),
+        ...pageTextList.map((t, i) => el('div', {},
+          pageTextList.length > 1 ? el('h4', { class: 'ocr-page', text: `Seite ${i + 1}` }) : null,
+          el('pre', { text: t || '(noch kein Text)' }))))
       : ocrBtn
   );
 }
 
 function dueBox(doc) {
-  const done = Boolean(doc.meta.dueDone);
+  const r = reminderOf(doc.meta);
+  const done = Boolean(r.done);
   const withTitle = ctx.calendarWithTitle();
-  return el('div', { class: `due-box ${done ? 'is-done' : dueClass(doc.meta.dueDate)}` },
+  const leads = (r.lead || []).slice().sort((a, b) => b - a).map((d) => (LEADS.find((l) => l.days === d) || {}).label).filter(Boolean);
+  return el('div', { class: `due-box ${done ? 'is-done' : dueClass(r.date)}` },
     el('div', { class: 'due-head' },
-      el('strong', {}, icon(done ? 'checkCircle' : 'clock'), done ? 'Frist erledigt' : `Frist: ${formatDate(doc.meta.dueDate)}`),
-      done ? null : el('span', { text: dueLabel(doc.meta.dueDate) })
+      el('strong', {}, icon(done ? 'checkCircle' : 'clock'), done ? `${r.kind}: erledigt` : `${r.kind}: ${formatDate(r.date)}`),
+      done ? null : el('span', { text: dueLabel(r.date) })
     ),
+    el('p', { class: 'due-details', text: [r.amount ? `Betrag ${r.amount}` : null, leads.length ? `Erinnern: ${leads.join(', ')}` : null].filter(Boolean).join(' · ') }),
     el('div', { class: 'due-actions' },
       done ? null : el('button', { type: 'button', class: 'btn-secondary with-icon', onclick: () => {
         ctx.suspendAutoLock();
@@ -420,12 +626,15 @@ function dueBox(doc) {
         setTimeout(ctx.resumeAutoLock, 1500);
       } }, icon('calendar'), 'In Kalender'),
       el('button', { type: 'button', class: 'btn-secondary with-icon', onclick: async () => {
-        doc.meta = await updateMeta(ctx.getKey(), doc, { dueDone: !done });
-        toast(done ? 'Frist wieder offen' : 'Frist erledigt');
+        doc.meta = await updateMeta(ctx.getKey(), doc, reminderChanges({ ...r, done: !done }));
+        toast(done ? 'Wieder offen' : 'Erledigt', 'ok', {
+          label: 'Rückgängig',
+          onClick: async () => { doc.meta = await updateMeta(ctx.getKey(), doc, reminderChanges({ ...r, done })); render(); }
+        });
         render();
       } }, icon(done ? 'clock' : 'check'), done ? 'Wieder offen' : 'Erledigt')
     ),
-    done ? null : el('button', { type: 'button', class: 'btn-text small', text: 'Klappt der Kalender nicht? Als Datei teilen', onclick: async () => {
+    done ? null : el('button', { type: 'button', class: 'btn-text small', text: 'Klappt der Kalender nicht? Über das Teilen-Menü', onclick: async () => {
       ctx.suspendAutoLock();
       try {
         if (!(await shareCalendarFile(doc, withTitle))) alert('Teilen wird auf diesem Gerät nicht unterstützt.');
@@ -438,9 +647,27 @@ function dueBox(doc) {
   );
 }
 
-function renderEdit(doc) {
+/** Vorschlag aus dem Import – wird erst nach Bestätigung zur Erinnerung. */
+function reminderSuggestionBox(doc) {
+  const s = doc.meta.reminderSuggestion;
+  const proposal = { date: s.date, kind: s.kind || 'Zahlung', amount: s.amount || null, lead: [1, 0], done: false };
+  return suggestionCard(proposal, {
+    onAccept: async () => {
+      doc.meta = await updateMeta(ctx.getKey(), doc, reminderChanges(proposal));
+      toast('Erinnerung gesetzt');
+      render();
+    },
+    onEdit: () => renderEdit(doc, proposal),
+    onDismiss: async () => {
+      doc.meta = await updateMeta(ctx.getKey(), doc, { reminderSuggestion: null });
+      render();
+    }
+  });
+}
+
+function renderEdit(doc, proposal = null) {
   const slot = document.getElementById('edit-slot');
-  if (slot.firstChild) { slot.replaceChildren(); return; }
+  if (slot.firstChild && !proposal) { slot.replaceChildren(); return; }
 
   const category = el('select', {});
   let selected = existingFolderId(doc.meta.category);
@@ -456,7 +683,7 @@ function renderEdit(doc) {
   const date = el('input', { type: 'date', value: doc.meta.date });
   const note = el('textarea', { rows: '3', maxlength: '1000' });
   note.value = doc.meta.note || '';
-  const due = el('input', { type: 'date', value: doc.meta.dueDate || '' });
+  const reminder = reminderFields(proposal || reminderOf(doc.meta));
   const error = el('p', { class: 'error', role: 'alert' });
 
   const form = el('form', { class: 'card form-card', novalidate: true },
@@ -464,7 +691,7 @@ function renderEdit(doc) {
     el('label', {}, 'Titel', title),
     el('label', {}, 'Datum des Dokuments', date),
     el('label', {}, 'Notiz', note),
-    el('label', {}, 'Frist / Erinnerung (leer = keine)', due),
+    el('div', { class: 'edit-reminder' }, el('span', { class: 'lead-title', text: 'Erinnerung' }), reminder.node),
     error,
     el('button', { type: 'submit', class: 'btn-primary', text: 'Änderungen speichern' })
   );
@@ -474,7 +701,7 @@ function renderEdit(doc) {
     try {
       doc.meta = await updateMeta(ctx.getKey(), doc, {
         title: title.value.trim(), category: existingFolderId(selected), date: date.value || doc.meta.date, note: note.value.trim(),
-        dueDate: due.value || null, dueDone: due.value && due.value !== doc.meta.dueDate ? false : Boolean(doc.meta.dueDone)
+        ...reminderChanges(reminder.read())
       });
       toast('Änderungen gespeichert');
       render();
@@ -487,27 +714,25 @@ function renderEdit(doc) {
   title.focus();
 }
 
-async function recognizeLater(doc, pageBlobs, button) {
-  if (!pageBlobs.length) return;
-  button.disabled = true;
+/** Gefundene Wörter auf dem Seitenbild markieren. */
+async function highlightWords(doc, index, terms, wrap, myRender) {
+  if (!wrap) return;
   try {
-    const texts = [];
-    for (const [i, blob] of pageBlobs.entries()) {
-      button.textContent = `Text wird erkannt … Seite ${i + 1} von ${pageBlobs.length}`;
-      texts.push(await recognizeText(await renderPage(blob, 0, true)));
+    const data = await loadPageWords(ctx.getKey(), doc, index);
+    if (!data || !data.words || myRender !== renderId) return;
+    const wanted = terms.filter((t) => t.length >= 2 && !/^dt\d|^\d+d\d\d$/.test(t));
+    const boxes = data.words.filter(([word]) => {
+      const w = fold(word).replace(/[^\p{L}\p{N}]/gu, '');
+      return w.length >= 2 && wanted.some((t) => w.includes(t) || (t.length >= 5 && t.includes(w) && w.length >= 4));
+    });
+    for (const [, x0, y0, x1, y1] of boxes.slice(0, 40)) {
+      wrap.append(el('span', { class: 'word-mark', style: {
+        left: `${(x0 / data.w) * 100}%`, top: `${(y0 / data.h) * 100}%`,
+        width: `${((x1 - x0) / data.w) * 100}%`, height: `${((y1 - y0) / data.h) * 100}%`
+      } }));
     }
-    const text = texts.join('\n\n').trim();
-    if (text.replace(/\s/g, '').length < 5) {
-      button.textContent = 'Kein Text gefunden';
-      return;
-    }
-    const s = suggestFromText(text, docs);
-    doc.meta = await updateMeta(ctx.getKey(), doc, { text, sender: doc.meta.sender || (s && s.sender) || null });
-    render();
   } catch (err) {
-    console.error(err);
-    button.textContent = 'Texterkennung nicht möglich – Internet beim ersten Mal nötig';
-    button.disabled = false;
+    console.warn('Markierung nicht möglich', err);
   }
 }
 
@@ -538,10 +763,16 @@ async function share(doc) {
 }
 
 async function remove(doc, back) {
-  if (!confirm(`„${doc.meta.title}“ wirklich löschen?\n\nDas kann nicht rückgängig gemacht werden (außer über ein Backup).`)) return;
   try {
-    await deleteDocument(doc);
-    toast('Dokument gelöscht');
+    await moveToTrash(ctx.getKey(), doc);
+    toast('In den Papierkorb gelegt', 'ok', {
+      label: 'Rückgängig',
+      onClick: async () => {
+        await restoreFromTrash(ctx.getKey(), doc);
+        await refreshArchive();
+        toast('Wiederhergestellt');
+      }
+    });
     view = back;
     await refreshArchive();
   } catch (err) {

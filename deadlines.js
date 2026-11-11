@@ -1,8 +1,40 @@
-// Fristen: Anzeige („in 3 Tagen“) und Kalender-Einträge (.ics-Datei).
-// Der Kalender-Eintrag wird auf dem iPhone erzeugt und an die Kalender-App
-// übergeben – es gibt keinen Server dazwischen.
+// Erinnerungen (Fristen): Modell, Anzeige, Eingabefelder und Kalender (.ics).
+//
+// Eine Erinnerung gehört zu einem Dokument und steht verschlüsselt in
+// dessen Angaben: meta.reminder = { date, kind, amount, lead: [7, 1, 0], done }
+// Ältere Dokumente hatten nur meta.dueDate/meta.dueDone – die werden hier
+// gelesen, als wären sie eine Erinnerung (keine Umstellung der Daten nötig).
+//
+// Wichtig: Die App schlägt Erinnerungen nur VOR. Gesetzt wird eine
+// Erinnerung erst, wenn du sie bestätigst oder selbst einträgst.
 
-import { formatDate } from './dom.js';
+import { el, formatDate, todayISO } from './dom.js';
+
+export const KINDS = ['Zahlung', 'Kündigung', 'Widerspruch', 'Ablauf', 'Frist', 'Sonstiges'];
+export const LEADS = [
+  { days: 7, label: '7 Tage vorher' },
+  { days: 3, label: '3 Tage vorher' },
+  { days: 1, label: '1 Tag vorher' },
+  { days: 0, label: 'Am Tag selbst' }
+];
+export const DEFAULT_LEAD = [1, 0];
+
+/** Erinnerung eines Dokuments (auch aus dem alten Format) oder null. */
+export function reminderOf(meta) {
+  if (meta.reminder && meta.reminder.date) return meta.reminder;
+  if (meta.dueDate) return { date: meta.dueDate, kind: 'Frist', amount: null, lead: DEFAULT_LEAD, done: Boolean(meta.dueDone) };
+  return null;
+}
+
+/** Änderungen für updateMeta – alte Felder werden mitgeführt. */
+export function reminderChanges(reminder) {
+  return {
+    reminder: reminder || null,
+    dueDate: reminder ? reminder.date : null,
+    dueDone: reminder ? Boolean(reminder.done) : false,
+    reminderSuggestion: null
+  };
+}
 
 function startOfDay(iso) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -32,11 +64,92 @@ export function dueClass(iso) {
   return '';
 }
 
-/** Offene Fristen, früheste zuerst. */
+/** Offene Erinnerungen, früheste zuerst (ohne Papierkorb). */
 export function openDeadlines(docs) {
   return docs
-    .filter((d) => d.meta.dueDate && !d.meta.dueDone)
-    .sort((a, b) => a.meta.dueDate.localeCompare(b.meta.dueDate));
+    .filter((d) => !d.meta.trashedAt)
+    .map((d) => ({ doc: d, r: reminderOf(d.meta) }))
+    .filter((x) => x.r && !x.r.done)
+    .sort((a, b) => a.r.date.localeCompare(b.r.date))
+    .map((x) => x.doc);
+}
+
+// ---------------------------------------------------------------------
+// Eingabefelder (beim Scannen und beim Bearbeiten)
+// ---------------------------------------------------------------------
+/**
+ * Felder für eine Erinnerung. Ergebnis: { node, read(), set(reminder), isActive() }
+ * read() liefert null, wenn keine Erinnerung gesetzt ist.
+ */
+export function reminderFields(initial = null) {
+  let active = Boolean(initial);
+  const date = el('input', { type: 'date', 'aria-label': 'Datum der Erinnerung' });
+  const kind = el('select', { 'aria-label': 'Art' }, KINDS.map((k) => el('option', { value: k, text: k })));
+  const amount = el('input', { type: 'text', inputmode: 'decimal', placeholder: 'z. B. 89,90 €', maxlength: '30', 'aria-label': 'Betrag' });
+  const leadBoxes = LEADS.map((l) => el('label', { class: 'check lead' },
+    el('input', { type: 'checkbox', value: String(l.days) }), l.label));
+  const addBtn = el('button', { type: 'button', class: 'btn-text with-icon reminder-add', text: '+ Erinnerung hinzufügen' });
+  const removeBtn = el('button', { type: 'button', class: 'btn-text danger small', text: 'Erinnerung entfernen' });
+  const fields = el('div', { class: 'reminder-fields' },
+    el('div', { class: 'reminder-grid' },
+      el('label', {}, 'Fällig am', date),
+      el('label', {}, 'Art', kind)
+    ),
+    el('label', {}, 'Betrag (optional)', amount),
+    el('div', { class: 'lead-group' }, el('span', { class: 'lead-title', text: 'Erinnern' }), ...leadBoxes),
+    removeBtn
+  );
+  const node = el('div', { class: 'reminder-editor' }, addBtn, fields);
+
+  const set = (r) => {
+    active = Boolean(r);
+    const value = r || { date: '', kind: 'Zahlung', amount: '', lead: DEFAULT_LEAD };
+    date.value = value.date || '';
+    kind.value = KINDS.includes(value.kind) ? value.kind : 'Frist';
+    amount.value = value.amount || '';
+    const lead = value.lead && value.lead.length ? value.lead : DEFAULT_LEAD;
+    leadBoxes.forEach((box) => { box.firstChild.checked = lead.includes(Number(box.firstChild.value)); });
+    fields.hidden = !active;
+    addBtn.hidden = active;
+  };
+  addBtn.addEventListener('click', () => {
+    set({ date: '', kind: 'Zahlung', amount: '', lead: DEFAULT_LEAD });
+    date.focus();
+  });
+  removeBtn.addEventListener('click', () => set(null));
+  set(initial);
+
+  return {
+    node,
+    set,
+    isActive: () => active,
+    read: () => {
+      if (!active || !date.value) return null;
+      const lead = leadBoxes.filter((b) => b.firstChild.checked).map((b) => Number(b.firstChild.value));
+      return {
+        date: date.value,
+        kind: kind.value,
+        amount: amount.value.trim() || null,
+        lead: lead.length ? lead : [0],
+        done: initial ? Boolean(initial.done) && initial.date === date.value : false
+      };
+    }
+  };
+}
+
+/** Karte „Erinnerung vorgeschlagen“ – nichts wird ohne Bestätigung gesetzt. */
+export function suggestionCard(suggestion, { onAccept, onEdit, onDismiss }) {
+  return el('div', { class: 'reminder-suggestion' },
+    el('div', { class: 'rs-text' },
+      el('strong', { text: 'Erinnerung vorschlagen?' }),
+      el('span', { text: [suggestion.kind, formatDate(suggestion.date), suggestion.amount].filter(Boolean).join(' · ') })
+    ),
+    el('div', { class: 'rs-actions' },
+      el('button', { type: 'button', class: 'btn-secondary', text: 'Übernehmen', onclick: onAccept }),
+      el('button', { type: 'button', class: 'btn-text', text: 'Ändern', onclick: onEdit }),
+      el('button', { type: 'button', class: 'btn-text', text: 'Nein danke', onclick: onDismiss })
+    )
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -60,19 +173,34 @@ function utcStamp(date = new Date()) {
   return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
 }
 
+// Erinnerung um 9 Uhr, „days“ Tage vor dem (ganztägigen) Termin
+function trigger(days) {
+  if (days <= 0) return 'PT9H';
+  return days === 1 ? '-PT15H' : `-P${days - 1}DT15H`;
+}
+
 /**
- * Kalenderdatei für eine Frist.
- * withTitle = false → neutraler Eintrag ohne Inhalt des Dokuments.
+ * Kalenderdatei für eine Erinnerung.
+ * withTitle = false → neutral: ohne Titel, Beträge und Nummern.
  */
 export function buildIcs(doc, withTitle) {
-  const day = doc.meta.dueDate.replace(/-/g, '');
-  const end = new Date(startOfDay(doc.meta.dueDate).getTime() + 86400000);
+  const r = reminderOf(doc.meta) || { date: todayISO(), kind: 'Frist', lead: DEFAULT_LEAD };
+  const day = r.date.replace(/-/g, '');
+  const end = new Date(startOfDay(r.date).getTime() + 86400000);
   const pad = (n) => String(n).padStart(2, '0');
   const endDay = `${end.getFullYear()}${pad(end.getMonth() + 1)}${pad(end.getDate())}`;
-  const summary = withTitle ? `Frist: ${doc.meta.title}` : 'Frist – Dokumente-App';
+  const summary = withTitle ? `${r.kind}: ${doc.meta.title}` : 'Frist – Dokumente-App';
   const description = withTitle
-    ? [doc.meta.note, 'Details in der Dokumente-App.'].filter(Boolean).join('\n')
-    : 'Ein Dokument in deiner Dokumente-App hat heute eine Frist. Öffne die App für Details.';
+    ? [r.amount ? `Betrag: ${r.amount}` : null, 'Details in der Dokumente-App.'].filter(Boolean).join('\n')
+    : 'Ein Dokument in deiner Dokumente-App hat eine Frist. Öffne die App für Details.';
+
+  const alarms = [...new Set(r.lead && r.lead.length ? r.lead : DEFAULT_LEAD)].sort((a, b) => b - a).flatMap((days) => [
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    `DESCRIPTION:${icsText(summary)}`,
+    `TRIGGER:${trigger(days)}`,
+    'END:VALARM'
+  ]);
 
   const lines = [
     'BEGIN:VCALENDAR',
@@ -88,28 +216,26 @@ export function buildIcs(doc, withTitle) {
     `SUMMARY:${icsText(summary)}`,
     `DESCRIPTION:${icsText(description)}`,
     'TRANSP:TRANSPARENT',
-    // Erinnerung am Vortag um 9 Uhr …
-    'BEGIN:VALARM',
-    'ACTION:DISPLAY',
-    `DESCRIPTION:${icsText(summary)}`,
-    'TRIGGER:-PT15H',
-    'END:VALARM',
-    // … und am Tag selbst um 9 Uhr
-    'BEGIN:VALARM',
-    'ACTION:DISPLAY',
-    `DESCRIPTION:${icsText(summary)}`,
-    'TRIGGER:PT9H',
-    'END:VALARM',
+    ...alarms,
     'END:VEVENT',
     'END:VCALENDAR'
   ];
   return lines.map(fold).join('\r\n') + '\r\n';
 }
 
-/**
- * Frist an den Kalender übergeben. Auf dem iPhone öffnet sich der
- * Kalender-Dialog „Hinzufügen“. Muss direkt nach dem Antippen laufen.
- */
+/** Kalenderdatei über das Teilen-Menü weitergeben (z. B. an „Kalender“). */
+export async function shareCalendarFile(doc, withTitle) {
+  const file = new File([buildIcs(doc, withTitle)], 'Erinnerung.ics', { type: 'text/calendar' });
+  if (!navigator.canShare || !navigator.canShare({ files: [file] })) return false;
+  try {
+    await navigator.share({ files: [file] });
+  } catch (err) {
+    if (err.name !== 'AbortError') throw err;
+  }
+  return true;
+}
+
+/** Kalenderdatei direkt öffnen – das iPhone zeigt dann „Zum Kalender hinzufügen“. */
 export function openInCalendar(doc, withTitle) {
   const blob = new Blob([buildIcs(doc, withTitle)], { type: 'text/calendar;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -121,16 +247,4 @@ export function openInCalendar(doc, withTitle) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 120000);
-}
-
-/** Alternative: Kalenderdatei über das Teilen-Menü weitergeben. */
-export async function shareCalendarFile(doc, withTitle) {
-  const file = new File([buildIcs(doc, withTitle)], 'Frist.ics', { type: 'text/calendar' });
-  if (!navigator.canShare || !navigator.canShare({ files: [file] })) return false;
-  try {
-    await navigator.share({ files: [file] });
-  } catch (err) {
-    if (err.name !== 'AbortError') throw err;
-  }
-  return true;
 }

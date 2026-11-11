@@ -1347,3 +1347,316 @@ input.switch:checked { background: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .toast, .tile, .btn-primary, .tab svg { transition: none; }
 }
+
+/* =====================================================================
+   0.7 – Suche, Warteschlange, Umstellungs-Dialog
+   ===================================================================== */
+.search-filters { display: flex; gap: 8px; margin: 8px 0 4px; }
+.search-filters[hidden] { display: none; }
+
+.filter-select {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.recent-searches { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 10px; }
+.recent-searches[hidden] { display: none; }
+.recent-searches .hint { width: 100%; font-size: 12px; }
+
+.chip {
+  appearance: none;
+  border: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.search-hit { align-items: flex-start; }
+.search-hit .thumb-box { margin-top: 2px; }
+
+.snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.snippet mark, .snippet-page { color: var(--text); }
+.snippet mark { background: color-mix(in srgb, var(--accent) 28%, transparent); border-radius: 3px; padding: 0 1px; }
+
+.queue-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.queue-chip[hidden] { display: none; }
+.queue-chip.is-error { background: rgba(224, 64, 90, 0.1); }
+.queue-chip .btn-text { padding: 0; font-size: 14px; font-weight: 600; }
+
+/* Treffer im Seitenbild markieren */
+.page-wrap { position: relative; }
+.word-mark {
+  position: absolute;
+  border-radius: 3px;
+  background: rgba(255, 214, 10, 0.45);
+  box-shadow: 0 0 0 2px rgba(255, 170, 0, 0.9);
+  pointer-events: none;
+}
+
+.ocr-page { margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+
+/* Dialog */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: rgba(14, 13, 21, 0.55);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.dialog-backdrop[hidden] { display: none; }
+
+.dialog {
+  width: 100%;
+  max-width: 380px;
+  padding: 22px 20px 14px;
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.dialog h2 { margin: 12px 0 6px; font-size: 20px; }
+.dialog p { margin: 0 0 10px; }
+.dialog .btn-primary { width: 100%; margin-top: 8px; }
+
+.dialog-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.dialog-icon svg { width: 28px; height: 28px; }
+
+/* =====================================================================
+   0.8 – Import / Eingang
+   ===================================================================== */
+.inbox { margin-bottom: 18px; }
+.inbox[hidden] { display: none; }
+.inbox-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.inbox-title .section-label { margin-top: 4px; }
+.inbox-bulk { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.inbox-bulk .btn-primary { width: 100%; }
+.bulk-row { display: flex; gap: 8px; }
+.bulk-row .btn-secondary { padding: 8px 14px; font-size: 14px; white-space: nowrap; }
+
+.inbox-card {
+  margin-bottom: 10px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.inbox-card.is-error, .inbox-card.is-password { box-shadow: inset 0 0 0 2px rgba(224, 64, 90, 0.5); }
+
+.inbox-head { display: flex; align-items: center; gap: 12px; }
+
+.inbox-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 64px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.inbox-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.inbox-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.inbox-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.inbox-sub { font-size: 12.5px; color: var(--muted); }
+.inbox-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.inbox-status.is-ready { color: var(--success); font-weight: 600; }
+.inbox-status.is-error, .inbox-status.is-password { color: var(--danger); font-weight: 600; }
+.inbox-check { width: 24px; height: 24px; accent-color: var(--accent); flex-shrink: 0; }
+.inbox-warning { margin: 8px 0 0; font-size: 13px; color: var(--warning); }
+
+.inbox-fields { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.inbox-fields select { margin-top: 6px; }
+.inbox-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.inbox-actions .btn-primary { flex: 1; padding: 12px; }
+.inbox-password { margin-top: 10px; }
+.inbox-password .hint, .inbox-password .error { margin: 0 0 8px; font-size: 13px; }
+
+.inbox-fields select, .inbox-fields input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.inbox-fields label.suggested > input, .inbox-fields label.suggested > select { border-color: var(--accent); background-color: var(--accent-soft); }
+
+.help-card { margin-top: 14px; padding: 4px 16px; }
+.help-card summary { padding: 12px 0; cursor: pointer; font-weight: 600; color: var(--accent); }
+.help-card ol { margin: 0 0 8px; padding-left: 20px; }
+.help-card li { margin-bottom: 6px; }
+.help-card .hint { margin: 0 0 12px; }
+
+/* =====================================================================
+   0.9 – Duplikate, Papierkorb, Rückgängig
+   ===================================================================== */
+.toast.has-action { display: flex; align-items: center; gap: 14px; pointer-events: auto; padding: 8px 8px 8px 18px; }
+.toast.has-action::before { content: none; }
+.toast-action {
+  appearance: none;
+  border: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #c9bcff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+@media (prefers-color-scheme: dark) { .toast-action { background: rgba(28, 26, 41, 0.1); color: var(--accent-strong); } }
+
+.dup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: flex;
+  flex-direction: column;
+  padding: calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 14px);
+  background: var(--bg);
+  overflow-y: auto;
+  transition: transform 0.18s, opacity 0.18s;
+}
+.dup-overlay.fly-left { transform: translateX(-30%); opacity: 0; }
+.dup-overlay.fly-right { transform: translateX(30%); opacity: 0; }
+.dup-overlay.fly-down { transform: translateY(20%); opacity: 0; }
+.dup-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.dup-head strong { font-size: 22px; }
+
+.dup-swipe { position: relative; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.dup-stack { display: flex; flex-direction: column; align-items: stretch; gap: 6px; touch-action: pan-y; transition: transform 0.15s; cursor: grab; }
+.dup-stack.is-dragging { transition: none; }
+.dup-vs { text-align: center; font-size: 22px; color: var(--muted); line-height: 1; }
+
+.dup-card {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.dup-card.is-keep { box-shadow: inset 0 0 0 2px var(--success), var(--shadow); }
+.dup-label { position: absolute; top: -8px; left: 12px; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 700; }
+.dup-thumb { width: 84px; height: 112px; flex-shrink: 0; border-radius: 8px; overflow: hidden; background: var(--surface-2); display: flex; align-items: center; justify-content: center; }
+.dup-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.dup-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 14px; color: var(--muted); }
+.dup-title { color: var(--text); font-size: 15px; overflow-wrap: anywhere; }
+.dup-info .is-diff { color: var(--warning); font-weight: 700; }
+.dup-keep { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--text); font-size: 14px; }
+.dup-keep input { width: 20px; height: 20px; accent-color: var(--success); }
+
+.dup-hint { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; padding: 6px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.dup-hint.left { left: 0; background: var(--success); color: #fff; }
+.dup-hint.right { right: 0; background: var(--danger); color: #fff; }
+.dup-hint.is-active { opacity: 1; }
+.dup-help { margin: 12px 0 6px; font-size: 13px; }
+.dup-actions { display: flex; flex-direction: column; gap: 8px; }
+.dup-actions .btn-secondary { width: 100%; padding: 13px; }
+
+#trash-list[hidden] { display: none; }
+.trash-row { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
+.trash-row + .trash-row { border-top: 1px solid var(--border); }
+.trash-row .btn-text { padding: 6px; font-size: 14px; white-space: nowrap; }
+
+/* =====================================================================
+   1.0 – Erinnerungen
+   ===================================================================== */
+#soon-section { margin-top: 4px; }
+#soon-section[hidden] { display: none; }
+.due-details { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.due-details:empty { display: none; }
+
+.reminder-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.rs-text { display: flex; flex-direction: column; gap: 2px; font-size: 15px; }
+.rs-text span { color: var(--muted); }
+.rs-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rs-actions .btn-secondary { padding: 8px 14px; background: var(--accent); color: var(--accent-text); }
+.rs-actions .btn-text { padding: 8px 6px; font-size: 15px; }
+
+.reminder-editor { display: flex; flex-direction: column; }
+.reminder-add { align-self: flex-start; padding: 6px 0; font-weight: 600; }
+.reminder-add[hidden], .reminder-fields[hidden] { display: none; }
+.reminder-fields { display: flex; flex-direction: column; gap: 12px; padding: 12px; border-radius: 12px; background: var(--accent-soft); }
+.reminder-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.reminder-fields select, .reminder-fields input[type="text"], .reminder-fields input[type="date"] {
+  display: block; width: 100%; min-height: 44px; margin-top: 6px; padding: 10px 12px;
+  border: 1px solid transparent; border-radius: 12px; background: var(--surface); color: var(--text);
+  font: inherit; font-size: 16px; -webkit-appearance: none; appearance: none;
+}
+.lead-group { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.lead-title { width: 100%; font-size: 14px; color: var(--muted); }
+.check.lead { margin: 0; font-size: 14px; }
+.check.lead input { width: 20px; height: 20px; }
+.edit-reminder { display: flex; flex-direction: column; gap: 4px; }

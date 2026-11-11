@@ -2,7 +2,7 @@
 
 // Bei jeder Änderung an den Dateien diese Nummer erhöhen,
 // damit Handys die neue Version laden.
-const CACHE_NAME = 'dokumente-v8';
+const CACHE_NAME = 'dokumente-v13';
 
 // Die großen Dateien der Texterkennung liegen in einem eigenen Speicher.
 // Er bleibt bei App-Updates erhalten, damit sie nicht jedes Mal neu
@@ -14,7 +14,15 @@ const OCR_FILES = [
   'tesseract-core-lstm.wasm.js',
   'tesseract-core-simd-lstm.wasm.js',
   'tesseract-core-relaxedsimd-lstm.wasm.js',
-  'deu.traineddata.gz'
+  'deu.traineddata.gz',
+  'fra.traineddata.gz',
+  'eng.traineddata.gz',
+  // PDF-Import (pdf.js) – ebenfalls erst beim ersten Gebrauch geladen
+  'pdf.min.js',
+  'pdf.worker.min.js',
+  'openjpeg.wasm',
+  'jbig2.wasm',
+  'qcms_bg.wasm'
 ];
 
 // Alle Dateien, die offline verfügbar sein sollen (relative Pfade,
@@ -41,6 +49,15 @@ const APP_FILES = [
   './cropper.js',
   './deadlines.js',
   './icons.js',
+  './minisearch.js',
+  './search.js',
+  './ocrqueue.js',
+  './migrations.js',
+  './importer.js',
+  './pdfimport.js',
+  './duplicates.js',
+  './dupcheck.js',
+  './dupreview.js',
   './manifest.json',
   './icon.svg',
   './icon-192.png',
@@ -52,7 +69,9 @@ const APP_FILES = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_FILES))
+      // cache: 'reload' = immer frisch vom Server holen, nie aus dem Browser-
+      // Zwischenspeicher – sonst könnten alte und neue Dateien gemischt werden.
+      .then((cache) => cache.addAll(APP_FILES.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });

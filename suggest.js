@@ -8,8 +8,14 @@ import { formatDate } from './dom.js';
 const MONTHS = {
   januar: 1, jan: 1, februar: 2, feb: 2, märz: 3, maerz: 3, mär: 3, april: 4, apr: 4, mai: 5,
   juni: 6, jun: 6, juli: 7, jul: 7, august: 8, aug: 8, september: 9, sep: 9, sept: 9,
-  oktober: 10, okt: 10, november: 11, nov: 11, dezember: 12, dez: 12
+  oktober: 10, okt: 10, november: 11, nov: 11, dezember: 12, dez: 12,
+  // Französisch
+  janvier: 1, février: 2, fevrier: 2, mars: 3, avril: 4, juin: 6, juillet: 7, août: 8, aout: 8,
+  septembre: 9, octobre: 10, novembre: 11, décembre: 12, decembre: 12,
+  // Englisch
+  january: 1, february: 2, march: 3, may: 5, june: 6, july: 7, october: 10, december: 12, dec: 12, oct: 10
 };
+const MONTH_RE = 'januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember|janvier|février|fevrier|mars|avril|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre|january|february|march|may|june|july|october|december|jan|feb|mär|apr|jun|jul|aug|sept?|okt|oct|nov|dez|dec';
 
 // Schlüsselwörter → Start-Ordner (mit Gewicht)
 const RULES = {
@@ -54,8 +60,12 @@ function validDate(y, m, d, maxFutureDays = 60) {
 
 function findDates(text, maxFutureDays = 60) {
   const found = [];
-  const numeric = /(\d{1,2})\s?\.\s?(\d{1,2})\s?\.\s?(\d{4}|\d{2})(?!\d)/g;
-  const written = /(\d{1,2})\.?\s+(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember|jan|feb|mär|apr|jun|jul|aug|sept?|okt|nov|dez)\.?\s+(\d{4})/gi;
+  // TT.MM.JJJJ, TT.MM.JJ und TT/MM/JJJJ (französisch)
+  const numeric = /(\d{1,2})\s?[./]\s?(\d{1,2})\s?[./]\s?(\d{4}|\d{2})(?!\d)/g;
+  // 25. November 2026 · 25 novembre 2026 · 25 November 2026
+  const written = new RegExp(`(\\d{1,2})(?:\\.|er)?\\s+(${MONTH_RE})\\.?\\s+(\\d{4})`, 'giu');
+  // November 25, 2026 (englisch)
+  const writtenEn = new RegExp(`(${MONTH_RE})\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})`, 'giu');
   const iso = /(\d{4})-(\d{2})-(\d{2})/g;
   let m;
   while ((m = numeric.exec(text))) {
@@ -65,6 +75,11 @@ function findDates(text, maxFutureDays = 60) {
   while ((m = written.exec(text))) {
     const date = validDate(+m[3], MONTHS[m[2].toLowerCase()], +m[1], maxFutureDays);
     if (date) found.push({ date, index: m.index });
+  }
+  while ((m = writtenEn.exec(text))) {
+    const month = MONTHS[m[1].toLowerCase()];
+    const date = month ? validDate(+m[3], month, +m[2], maxFutureDays) : null;
+    if (date && !found.some((f) => Math.abs(f.index - m.index) < 4)) found.push({ date, index: m.index });
   }
   while ((m = iso.exec(text))) {
     const date = validDate(+m[1], +m[2], +m[3], maxFutureDays);
@@ -80,18 +95,25 @@ function pickDate(text) {
   const lower = text.toLowerCase();
   for (const d of dates) {
     const before = lower.slice(Math.max(0, d.index - 25), d.index);
-    if (/(datum|vom|ausgestellt|erstellt|den)\s*:?\s*$/.test(before)) return d.date;
+    if (/(datum|vom|ausgestellt|erstellt|den|date|le|du|dated)\s*:?\s*$/.test(before)) return d.date;
   }
   // Sonst: Daten bei Geburtstag/Zeitraum meiden – das erste übrige nehmen
   for (const d of dates) {
     const before = lower.slice(Math.max(0, d.index - 25), d.index);
-    if (!/(geb|geboren|bis|zeitraum|fällig|zahlbar)/.test(before)) return d.date;
+    if (!/(geb|geboren|né|born|bis|jusqu|until|zeitraum|fällig|zahlbar|avant|due|échéance)/.test(before)) return d.date;
   }
   return dates[0].date;
 }
 
-// Frist: Datum hinter „zahlbar bis“, „fällig am“, „Frist“, „spätestens“ …
-const DUE_WORDS = /(zahlbar|fällig|faellig|zahlungsziel|frist|spätestens|spaetestens|einzureichen|einreichen|zu zahlen|überweisen|ueberweisen|bitte bis|bis zum|gültig bis|gueltig bis|ablauf|abbuchung|wird abgebucht|einzug)[^\n]{0,30}$/;
+// Erinnerung: Datum hinter Schlüsselwörtern (Deutsch, Französisch, Englisch)
+// samt Art der Frist. Gewicht: je weiter oben die Regel, desto eindeutiger.
+const REMINDER_RULES = [
+  { kind: 'Kündigung', re: /(kündigungsfrist|kündigung bis|kündbar bis|kuendigungsfrist|date limite de résiliation|résiliation avant|cancel(?:lation)? by|notice period)/ },
+  { kind: 'Widerspruch', re: /(widerspruch bis|widerspruchsfrist|einspruch bis|einspruchsfrist|einspruch ist bis|widerspruch ist bis|recours avant|objection by)/ },
+  { kind: 'Ablauf', re: /(gültig bis|gueltig bis|ablauf|läuft ab|laeuft ab|ablaufdatum|valable jusqu'?au|date d'expiration|expire le|expires?|expiry date|valid until|valid through)/ },
+  { kind: 'Zahlung', re: /(zahlbar bis|zahlen bis|zahlen sie bis|bezahlen bis|begleichen bis|zahlbar am|zahlungsziel|fällig am|faellig am|fällig bis|fälligkeit|faelligkeit|zahlung bis|zu zahlen bis|bitte überweisen sie bis|überweisen sie bis|abbuchung am|wird abgebucht am|mahnung|zahlungserinnerung|à payer avant le|a payer avant le|à régler avant le|date d'échéance|échéance|avant le|payment due|due date|due by|pay by|payable by|amount due by)/ },
+  { kind: 'Frist', re: /(frist|spätestens|spaetestens|einzureichen bis|bis zum|deadline|date limite)/ }
+];
 
 function addDays(iso, days) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -100,16 +122,28 @@ function addDays(iso, days) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function findDueDate(text, docDate) {
+/** Erinnerung finden: { date, kind } oder null. */
+export function findReminder(text, docDate) {
   const lower = text.toLowerCase();
-  const candidates = findDates(text, 3 * 365).filter((d) => {
-    const before = lower.slice(Math.max(0, d.index - 45), d.index);
-    return DUE_WORDS.test(before) && (!docDate || d.date >= docDate);
-  });
-  if (candidates.length) return candidates.map((d) => d.date).sort()[0];
-  // „zahlbar innerhalb von 14 Tagen“ → Dokumentdatum + 14 Tage
-  const within = lower.match(/innerhalb (?:von |der nächsten )?(\d{1,3}) tag/);
-  if (within && docDate) return addDays(docDate, Number(within[1]));
+  const candidates = [];
+  for (const d of findDates(text, 3 * 365)) {
+    if (docDate && d.date < docDate) continue;
+    // nur im selben Satz bzw. in derselben Zeile zurückschauen
+    const before = lower.slice(Math.max(0, d.index - 60), d.index).split(/\.\s|\n|;/).pop();
+    const rule = REMINDER_RULES.findIndex((r) => r.re.test(before));
+    if (rule !== -1) candidates.push({ date: d.date, kind: REMINDER_RULES[rule].kind, rank: rule });
+  }
+  if (candidates.length) {
+    // Die früheste Frist ist die dringendste; bei gleichem Datum gewinnt die eindeutigere Art
+    candidates.sort((a, b) => a.date.localeCompare(b.date) || a.rank - b.rank);
+    return { date: candidates[0].date, kind: candidates[0].kind, others: candidates.slice(1).map(({ date, kind }) => ({ date, kind })) };
+  }
+  // „innerhalb von 14 Tagen“ · „within 14 days“ · „sous 14 jours“ → ab Dokumentdatum
+  const within = lower.match(/(?:innerhalb (?:von |der nächsten )?|within |sous |dans un délai de )(\d{1,3}) (?:tag|day|jour)/);
+  if (within && docDate) {
+    const kind = /(zahl|überweis|payment|pay|payer|régler)/.test(lower) ? 'Zahlung' : 'Frist';
+    return { date: addDays(docDate, Number(within[1])), kind };
+  }
   return null;
 }
 
@@ -248,7 +282,28 @@ export function suggestFromText(text, previousDocs = []) {
     date,
     title,
     note: noteParts.join('\n') || null,
-    dueDate: findDueDate(text, date),
+    ...(() => {
+      const r = findReminder(text, date);
+      return { dueDate: r ? r.date : null, dueKind: r ? r.kind : null, amount: findAmount(text) };
+    })(),
     sender
+  };
+}
+
+// ---------------------------------------------------------------------
+// Schlüsselfelder für die Duplikat-Erkennung
+// ---------------------------------------------------------------------
+// Unterscheiden sich Datum, Betrag, Belegnummer oder Abrechnungszeitraum,
+// sind zwei ähnliche Dokumente (z. B. Gehaltsabrechnungen) KEINE Duplikate.
+export function extractKeys(text) {
+  if (!text || text.replace(/\s/g, '').length < 15) return {};
+  const amount = findAmount(text);
+  const ref = text.match(/(?:rechnungs|beleg|auszugs?|abrechnungs|bescheid|vorgangs|bestell|auftrags)-?\s?(?:nummer|nr\.?)\s*:?\s*([A-Z0-9][A-Z0-9\-/.]{1,})/i);
+  const period = text.match(/(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\s+(\d{4})/i);
+  return {
+    date: pickDate(text) || null,
+    amount: amount ? amount.replace(/[^\d,]/g, '') : null,
+    ref: ref ? ref[1].toUpperCase().replace(/[^A-Z0-9]/g, '') : null,
+    period: period ? `${period[1].toLowerCase().replace('ä', 'ae')}${period[2]}` : null
   };
 }
