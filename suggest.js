@@ -43,31 +43,31 @@ const normalize = (text) => text.toLowerCase().replace(/\s+/g, ' ');
 // ---------------------------------------------------------------------
 // Datum
 // ---------------------------------------------------------------------
-function validDate(y, m, d) {
+function validDate(y, m, d, maxFutureDays = 60) {
   if (y < 100) y += y > 50 ? 1900 : 2000;
   const date = new Date(y, m - 1, d);
   if (date.getFullYear() !== y || date.getMonth() !== m - 1 || date.getDate() !== d) return null;
-  if (y < 1990 || date.getTime() > Date.now() + 60 * 86400000) return null;
+  if (y < 1990 || date.getTime() > Date.now() + maxFutureDays * 86400000) return null;
   const pad = (n) => String(n).padStart(2, '0');
   return `${y}-${pad(m)}-${pad(d)}`;
 }
 
-function findDates(text) {
+function findDates(text, maxFutureDays = 60) {
   const found = [];
   const numeric = /(\d{1,2})\s?\.\s?(\d{1,2})\s?\.\s?(\d{4}|\d{2})(?!\d)/g;
   const written = /(\d{1,2})\.?\s+(januar|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember|jan|feb|mär|apr|jun|jul|aug|sept?|okt|nov|dez)\.?\s+(\d{4})/gi;
   const iso = /(\d{4})-(\d{2})-(\d{2})/g;
   let m;
   while ((m = numeric.exec(text))) {
-    const date = validDate(+m[3], +m[2], +m[1]);
+    const date = validDate(+m[3], +m[2], +m[1], maxFutureDays);
     if (date) found.push({ date, index: m.index });
   }
   while ((m = written.exec(text))) {
-    const date = validDate(+m[3], MONTHS[m[2].toLowerCase()], +m[1]);
+    const date = validDate(+m[3], MONTHS[m[2].toLowerCase()], +m[1], maxFutureDays);
     if (date) found.push({ date, index: m.index });
   }
   while ((m = iso.exec(text))) {
-    const date = validDate(+m[1], +m[2], +m[3]);
+    const date = validDate(+m[1], +m[2], +m[3], maxFutureDays);
     if (date) found.push({ date, index: m.index });
   }
   return found.sort((a, b) => a.index - b.index);
@@ -88,6 +88,29 @@ function pickDate(text) {
     if (!/(geb|geboren|bis|zeitraum|fällig|zahlbar)/.test(before)) return d.date;
   }
   return dates[0].date;
+}
+
+// Frist: Datum hinter „zahlbar bis“, „fällig am“, „Frist“, „spätestens“ …
+const DUE_WORDS = /(zahlbar|fällig|faellig|zahlungsziel|frist|spätestens|spaetestens|einzureichen|einreichen|zu zahlen|überweisen|ueberweisen|bitte bis|bis zum|gültig bis|gueltig bis|ablauf|abbuchung|wird abgebucht|einzug)[^\n]{0,30}$/;
+
+function addDays(iso, days) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d + days);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function findDueDate(text, docDate) {
+  const lower = text.toLowerCase();
+  const candidates = findDates(text, 3 * 365).filter((d) => {
+    const before = lower.slice(Math.max(0, d.index - 45), d.index);
+    return DUE_WORDS.test(before) && (!docDate || d.date >= docDate);
+  });
+  if (candidates.length) return candidates.map((d) => d.date).sort()[0];
+  // „zahlbar innerhalb von 14 Tagen“ → Dokumentdatum + 14 Tage
+  const within = lower.match(/innerhalb (?:von |der nächsten )?(\d{1,3}) tag/);
+  if (within && docDate) return addDays(docDate, Number(within[1]));
+  return null;
 }
 
 // ---------------------------------------------------------------------
@@ -225,6 +248,7 @@ export function suggestFromText(text, previousDocs = []) {
     date,
     title,
     note: noteParts.join('\n') || null,
+    dueDate: findDueDate(text, date),
     sender
   };
 }

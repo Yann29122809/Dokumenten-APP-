@@ -84,6 +84,11 @@ export function openVault(record, password) {
   return unwrapDataKey(record, password, false);
 }
 
+/** Nur für das Einrichten von Face ID: exportierbare Kopie des Daten-Schlüssels. */
+export function openVaultForWrapping(record, password) {
+  return unwrapDataKey(record, password, true);
+}
+
 /** Passwort ändern: Daten-Schlüssel mit neuem Passwort neu einpacken. */
 export async function changeVaultPassword(record, oldPassword, newPassword) {
   const dataKey = await unwrapDataKey(record, oldPassword, true);

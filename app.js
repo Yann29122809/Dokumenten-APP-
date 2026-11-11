@@ -1,4 +1,5 @@
-import { createVault, openVault, changeVaultPassword, WrongPasswordError } from './crypto.js';
+import { createVault, openVault, openVaultForWrapping, changeVaultPassword, WrongPasswordError } from './crypto.js';
+import { faceIdAvailable, getFaceIdRecord, enableFaceId, unlockWithFaceId, disableFaceId } from './faceid.js';
 import { getMeta, setMeta } from './db.js';
 import { formatBytes } from './dom.js';
 import { initScan, clearScan } from './scan.js';
@@ -13,7 +14,8 @@ const MIN_PASSWORD_LENGTH = 8;
 // Der entsperrte Schlüssel lebt nur im Arbeitsspeicher, solange die App offen ist.
 let vaultKey = null;
 let vaultRecord = null;
-let settings = { autoLockMinutes: 5, lastBackup: null, ocrAuto: true };
+let settings = { autoLockMinutes: 5, lastBackup: null, ocrAuto: true, autoCrop: true, calendar: 'neutral' };
+let faceIdRecord = null;
 
 const saveSettings = () => setMeta('settings', settings);
 
@@ -105,6 +107,8 @@ function lock() {
   $('unlock-error').textContent = '';
   $('change-pw-form').hidden = true;
   $('change-pw-toggle').setAttribute('aria-expanded', 'false');
+  $('faceid-form').hidden = true;
+  $('faceid-error').textContent = '';
   showScreen('scan');
   showLockView('unlock');
   document.body.classList.add('locked');
@@ -190,6 +194,71 @@ $('unlock-form').addEventListener('submit', async (event) => {
   }
 });
 
+// ---------- Face ID ----------
+function updateFaceIdUi() {
+  $('faceid-unlock').hidden = !faceIdRecord;
+  $('unlock-text').textContent = faceIdRecord
+    ? 'Oder gib dein Passwort ein.'
+    : 'Gib dein Passwort ein, um deine Dokumente zu öffnen.';
+  $('faceid-status').textContent = faceIdRecord ? 'aktiv' : 'aus';
+  $('faceid-toggle-label').textContent = faceIdRecord ? 'Face ID ausschalten' : 'Face ID einrichten';
+}
+
+$('faceid-unlock').addEventListener('click', async () => {
+  if (!faceIdRecord) return;
+  const button = $('faceid-unlock');
+  $('faceid-error').textContent = '';
+  setBusy(button, true, 'Face ID …');
+  try {
+    const key = await unlockWithFaceId(faceIdRecord);
+    setBusy(button, false);
+    await unlocked(key);
+  } catch (err) {
+    setBusy(button, false);
+    if (err.code !== 'cancelled') $('faceid-error').textContent = err.message;
+  }
+});
+
+$('faceid-toggle').addEventListener('click', async () => {
+  if (faceIdRecord) {
+    if (!confirm('Face ID ausschalten? Du entsperrst dann wieder nur mit dem Passwort.\n\nDen Passkey „Dokumente-App“ kannst du danach in der App „Passwörter“ löschen.')) return;
+    await disableFaceId();
+    faceIdRecord = null;
+    updateFaceIdUi();
+    return;
+  }
+  const form = $('faceid-form');
+  form.hidden = !form.hidden;
+  $('faceid-setup-error').textContent = '';
+  if (!form.hidden) $('faceid-password').focus();
+});
+
+$('faceid-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const error = $('faceid-setup-error');
+  const password = $('faceid-password').value;
+  if (!password) { error.textContent = 'Bitte gib dein Passwort ein.'; return; }
+  const button = $('faceid-submit');
+  setBusy(button, true, 'Wird eingerichtet …');
+  error.textContent = '';
+  try {
+    const dataKey = await openVaultForWrapping(vaultRecord, password);
+    $('faceid-password').value = '';
+    await enableFaceId(dataKey);
+    faceIdRecord = await getFaceIdRecord();
+    $('faceid-form').hidden = true;
+    updateFaceIdUi();
+    alert('Face ID ist eingerichtet. Ab jetzt kannst du die App mit deinem Gesicht entsperren.');
+  } catch (err) {
+    $('faceid-password').value = '';
+    if (err instanceof WrongPasswordError) error.textContent = 'Das Passwort ist falsch.';
+    else if (err.code === 'cancelled') error.textContent = 'Abgebrochen.';
+    else { console.error(err); error.textContent = err.message || 'Face ID konnte nicht eingerichtet werden.'; }
+  } finally {
+    setBusy(button, false);
+  }
+});
+
 // ---------- Automatisch sperren ----------
 let inactivityTimer = null;
 let hiddenSince = null;
@@ -241,12 +310,15 @@ document.addEventListener('visibilitychange', () => {
 // Bildschirme Scannen und Ablage
 // =====================================================================
 const isOcrEnabled = () => settings.ocrAuto !== false;
+const isAutoCropEnabled = () => settings.autoCrop !== false;
+const calendarWithTitle = () => settings.calendar === 'title';
 
 initScan({
   getKey: () => vaultKey,
   suspendAutoLock,
   resumeAutoLock,
   isOcrEnabled,
+  isAutoCropEnabled,
   getDocs,
   onSaved: () => refreshArchive().catch((err) => console.error(err))
 });
@@ -256,6 +328,7 @@ initArchive({
   suspendAutoLock,
   resumeAutoLock,
   isOcrEnabled,
+  calendarWithTitle,
   getLastBackup: () => settings.lastBackup,
   goToBackup: () => {
     showScreen('settings');
@@ -267,6 +340,16 @@ initArchive({
 // Einstellungen: Sicherheit
 // =====================================================================
 $('lock-now').addEventListener('click', lock);
+
+$('autocrop-toggle').addEventListener('change', async (event) => {
+  settings.autoCrop = event.target.checked;
+  await saveSettings();
+});
+
+$('calendar-select').addEventListener('change', async (event) => {
+  settings.calendar = event.target.value;
+  await saveSettings();
+});
 
 $('ocr-toggle').addEventListener('change', async (event) => {
   settings.ocrAuto = event.target.checked;
@@ -491,8 +574,14 @@ async function start() {
     if (savedSettings) settings = { ...settings, ...savedSettings };
     $('autolock-select').value = String(settings.autoLockMinutes);
     $('ocr-toggle').checked = isOcrEnabled();
+    $('autocrop-toggle').checked = isAutoCropEnabled();
+    $('calendar-select').value = settings.calendar === 'title' ? 'title' : 'neutral';
 
     vaultRecord = await getMeta('vault');
+    faceIdRecord = vaultRecord ? (await getFaceIdRecord()) || null : null;
+    $('faceid-toggle').hidden = !(await faceIdAvailable());
+    updateFaceIdUi();
+    if ($('faceid-toggle').hidden) $('faceid-status').textContent = 'auf diesem Gerät nicht verfügbar';
     showLockView(vaultRecord ? 'unlock' : 'setup');
     if (vaultRecord) requestPersistentStorage();
   } catch (err) {

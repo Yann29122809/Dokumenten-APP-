@@ -11,6 +11,7 @@ import { imagesToPdf } from './makepdf.js';
 import { recognizeText } from './ocr.js';
 import { renderPage } from './images.js';
 import { suggestFromText } from './suggest.js';
+import { openDeadlines, dueLabel, dueClass, openInCalendar, shareCalendarFile } from './deadlines.js';
 
 const BACKUP_REMINDER_DAYS = 30;
 
@@ -170,6 +171,7 @@ function renderRoot() {
   const roots = childFolders(null);
   folderList.append(
     backupReminder() || '',
+    deadlinesCard() || '',
     el('div', { class: 'card' },
       el('button', { type: 'button', class: 'list-row', onclick: () => go({ name: 'all' }) },
         el('span', { class: 'dot dot-all' }),
@@ -200,6 +202,25 @@ function searchDocs(q) {
     const hay = fold([m.title, m.note, m.text, m.sender, folderLabel(existingFolderId(m.category)), formatDate(m.date), m.date].join(' \n '));
     return terms.every((t) => hay.includes(t));
   });
+}
+
+function deadlinesCard() {
+  const open = openDeadlines(docs);
+  if (!open.length) return null;
+  return el('div', {},
+    el('h3', { class: 'section-label', text: 'Fristen' }),
+    el('div', { class: 'card' }, open.slice(0, 8).map((doc) =>
+      el('button', { type: 'button', class: 'list-row', onclick: () => go({ name: 'detail', id: doc.id, back: { name: 'root' } }) },
+        el('span', { class: 'due-icon', 'aria-hidden': 'true', text: '⏰' }),
+        el('span', { class: 'grow' },
+          el('span', { class: 'row-title', text: doc.meta.title }),
+          el('span', { class: `row-sub due ${dueClass(doc.meta.dueDate)}`, text: dueLabel(doc.meta.dueDate) })
+        ),
+        el('span', { class: 'chevron', 'aria-hidden': 'true', text: '›' })
+      )
+    )),
+    open.length > 8 ? el('p', { class: 'hint', text: `… und ${open.length - 8} weitere` }) : ''
+  );
 }
 
 function backupReminder() {
@@ -315,6 +336,7 @@ function renderDetail(id) {
       dot(folderId), ` ${folderLabel(folderId)} · ${formatDate(doc.meta.date)} · ${pagesText(doc.meta.pageCount)}`
     ),
     doc.meta.note ? el('p', { class: 'doc-note', text: doc.meta.note }) : null,
+    doc.meta.dueDate ? dueBox(doc) : null,
     el('div', { class: 'button-row' },
       el('button', { type: 'button', class: 'btn-secondary', text: 'Bearbeiten', onclick: () => renderEdit(doc) }),
       shareBtn,
@@ -325,6 +347,38 @@ function renderDetail(id) {
     hasText
       ? el('details', { class: 'ocr-text' }, el('summary', { text: 'Erkannter Text' }), el('pre', { text: doc.meta.text }))
       : ocrBtn
+  );
+}
+
+function dueBox(doc) {
+  const done = Boolean(doc.meta.dueDone);
+  const withTitle = ctx.calendarWithTitle();
+  return el('div', { class: `due-box ${done ? 'is-done' : dueClass(doc.meta.dueDate)}` },
+    el('div', { class: 'due-head' },
+      el('strong', { text: done ? '✓ Frist erledigt' : `⏰ Frist: ${formatDate(doc.meta.dueDate)}` }),
+      done ? null : el('span', { text: dueLabel(doc.meta.dueDate) })
+    ),
+    el('div', { class: 'due-actions' },
+      done ? null : el('button', { type: 'button', class: 'btn-secondary', text: 'In Kalender eintragen', onclick: () => {
+        ctx.suspendAutoLock();
+        openInCalendar(doc, withTitle);
+        setTimeout(ctx.resumeAutoLock, 1500);
+      } }),
+      el('button', { type: 'button', class: 'btn-secondary', text: done ? 'Wieder offen' : 'Erledigt', onclick: async () => {
+        doc.meta = await updateMeta(ctx.getKey(), doc, { dueDone: !done });
+        render();
+      } })
+    ),
+    done ? null : el('button', { type: 'button', class: 'btn-text small', text: 'Klappt der Kalender nicht? Als Datei teilen', onclick: async () => {
+      ctx.suspendAutoLock();
+      try {
+        if (!(await shareCalendarFile(doc, withTitle))) alert('Teilen wird auf diesem Gerät nicht unterstützt.');
+      } catch (err) {
+        console.error(err);
+      } finally {
+        ctx.resumeAutoLock();
+      }
+    } })
   );
 }
 
@@ -346,6 +400,7 @@ function renderEdit(doc) {
   const date = el('input', { type: 'date', value: doc.meta.date });
   const note = el('textarea', { rows: '3', maxlength: '1000' });
   note.value = doc.meta.note || '';
+  const due = el('input', { type: 'date', value: doc.meta.dueDate || '' });
   const error = el('p', { class: 'error', role: 'alert' });
 
   const form = el('form', { class: 'card form-card', novalidate: true },
@@ -353,6 +408,7 @@ function renderEdit(doc) {
     el('label', {}, 'Titel', title),
     el('label', {}, 'Datum des Dokuments', date),
     el('label', {}, 'Notiz', note),
+    el('label', {}, 'Frist / Erinnerung (leer = keine)', due),
     error,
     el('button', { type: 'submit', class: 'btn-primary', text: 'Änderungen speichern' })
   );
@@ -361,7 +417,8 @@ function renderEdit(doc) {
     if (!title.value.trim()) { error.textContent = 'Bitte gib einen Titel ein.'; return; }
     try {
       doc.meta = await updateMeta(ctx.getKey(), doc, {
-        title: title.value.trim(), category: existingFolderId(selected), date: date.value || doc.meta.date, note: note.value.trim()
+        title: title.value.trim(), category: existingFolderId(selected), date: date.value || doc.meta.date, note: note.value.trim(),
+        dueDate: due.value || null, dueDone: due.value && due.value !== doc.meta.dueDate ? false : Boolean(doc.meta.dueDone)
       });
       render();
     } catch (err) {

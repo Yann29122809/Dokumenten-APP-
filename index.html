@@ -57,7 +57,9 @@
     <!-- Entsperren -->
     <form id="unlock-form" class="lock-form" hidden novalidate>
       <h1>Gesperrt</h1>
-      <p class="lock-text">Gib dein Passwort ein, um deine Dokumente zu öffnen.</p>
+      <button class="btn-primary faceid-btn" type="button" id="faceid-unlock" hidden>Mit Face ID entsperren</button>
+      <p class="error" id="faceid-error" role="alert"></p>
+      <p class="lock-text" id="unlock-text">Gib dein Passwort ein, um deine Dokumente zu öffnen.</p>
       <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
       <label>Passwort
         <input type="password" id="unlock-password" autocomplete="current-password" required>
@@ -121,6 +123,9 @@
           <label>Notiz (optional)
             <textarea id="doc-note" rows="2" maxlength="1000"></textarea>
           </label>
+          <label>Frist / Erinnerung (optional)
+            <input type="date" id="doc-due">
+          </label>
           <p class="error" id="scan-error" role="alert"></p>
           <button class="btn-primary" type="submit" id="scan-save">Verschlüsselt speichern</button>
           <button class="btn-text danger" type="button" id="scan-discard">Verwerfen</button>
@@ -143,6 +148,22 @@
       <div class="settings-group">
         <h2>Sicherheit</h2>
         <div class="card">
+          <div class="settings-row">
+            <span>Face ID</span>
+            <span class="hint" id="faceid-status">–</span>
+          </div>
+          <button class="settings-row" type="button" id="faceid-toggle" hidden>
+            <span id="faceid-toggle-label">Face ID einrichten</span><span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <form id="faceid-form" class="inline-form" hidden novalidate>
+            <p class="hint">Zur Sicherheit einmal dein Passwort eingeben. Danach fragt das iPhone nach Face ID.</p>
+            <input class="sr-only" type="text" name="username" autocomplete="username" value="Dokumente-App" tabindex="-1" aria-hidden="true">
+            <label>Passwort
+              <input type="password" id="faceid-password" autocomplete="current-password" required>
+            </label>
+            <p class="error" id="faceid-setup-error" role="alert"></p>
+            <button class="btn-primary" type="submit" id="faceid-submit">Face ID einrichten</button>
+          </form>
           <button class="settings-row" type="button" id="lock-now">
             <span>Jetzt sperren</span><span class="chevron" aria-hidden="true">›</span>
           </button>
@@ -178,13 +199,25 @@
       </div>
 
       <div class="settings-group">
-        <h2>Texterkennung</h2>
+        <h2>Scannen &amp; Texterkennung</h2>
         <div class="card">
+          <label class="settings-row">
+            <span>Automatisch zuschneiden</span>
+            <input type="checkbox" class="switch" id="autocrop-toggle" checked>
+          </label>
           <label class="settings-row">
             <span>Text automatisch erkennen</span>
             <input type="checkbox" class="switch" id="ocr-toggle" checked>
           </label>
+          <label class="settings-row">
+            <span>Kalender-Einträge</span>
+            <select id="calendar-select">
+              <option value="neutral">Neutral</option>
+              <option value="title">Mit Titel</option>
+            </select>
+          </label>
         </div>
+        <p class="group-note">„Neutral“ schreibt nur „Frist – Dokumente-App“ in den Kalender. Dein Kalender ist nicht verschlüsselt – mit „Mit Titel“ steht dort z.&nbsp;B. „Frist: Rechnung Stadtwerke“.</p>
         <p class="group-note">Liest beim Scannen den Text und schlägt Ablageort, Datum, Titel und Notiz vor. Läuft komplett auf diesem iPhone – deine Dokumente werden nirgendwohin geschickt. Beim ersten Mal werden ca. 5&nbsp;MB Programm und Sprachdaten geladen (Internet nötig), danach geht es auch offline.</p>
       </div>
 
@@ -223,7 +256,7 @@
       <div class="settings-group">
         <h2>Info</h2>
         <div class="card">
-          <div class="settings-row"><span>Version</span><span class="hint">0.4.0</span></div>
+          <div class="settings-row"><span>Version</span><span class="hint">0.5.0</span></div>
           <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
           <div class="settings-row"><span>Dokumente</span><span class="hint" id="doc-count">–</span></div>
           <div class="settings-row"><span>Belegter Speicher</span><span class="hint" id="storage-used">–</span></div>

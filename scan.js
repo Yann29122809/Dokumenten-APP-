@@ -8,12 +8,15 @@ import {
   fillFolderSelect, folderLabel, folderSingular, existingFolderId, askAndCreateFolder, onFoldersChanged, allFolders
 } from './folders.js';
 import { recognizeText } from './ocr.js';
+import { detectDocument, warpImage, fullQuad } from './crop.js';
+import { openCropper } from './cropper.js';
 import { suggestFromText } from './suggest.js';
 
 const $ = (id) => document.getElementById(id);
 
 let ctx = null;
-let pages = [];      // { blob, url, rotation, ratio, ocr: { status, text } }
+// Seite: { original, origUrl, origW, origH, quad, autoQuad, blob, url, rotation, ratio, ocr: { status, text } }
+let pages = [];
 let busy = false;
 let draftId = 0;     // wird beim Verwerfen erhöht → laufende Erkennung ignoriert
 let ocrRunning = null;
@@ -22,7 +25,7 @@ let dirty = {};      // Felder, die du selbst geändert hast, werden nicht über
 let suggestion = null;
 let lastFolderId = 'invoice';
 
-const FIELDS = { category: 'doc-category', title: 'doc-title', date: 'doc-date', note: 'doc-note' };
+const FIELDS = { category: 'doc-category', title: 'doc-title', date: 'doc-date', note: 'doc-note', dueDate: 'doc-due' };
 
 export function initScan(context) {
   ctx = context;
@@ -86,8 +89,24 @@ async function addFiles(files) {
   let failed = 0;
   for (const file of files) {
     try {
-      const { blob, width, height } = await prepareImage(file);
-      pages.push({ blob, url: URL.createObjectURL(blob), rotation: 0, ratio: height / width, ocr: { status: 'pending', text: '' } });
+      const original = await prepareImage(file);
+      const page = {
+        original: original.blob, origUrl: URL.createObjectURL(original.blob), origW: original.width, origH: original.height,
+        quad: null, autoQuad: null, blob: original.blob, url: null, rotation: 0, ratio: original.height / original.width,
+        ocr: { status: 'pending', text: '' }
+      };
+      // Blatt automatisch finden und gerade ziehen
+      if (ctx.isAutoCropEnabled()) {
+        try {
+          setStatus('Blatt wird gesucht und gerade gezogen …');
+          page.autoQuad = await detectDocument(original.blob);
+          if (page.autoQuad) await applyCrop(page, page.autoQuad);
+        } catch (err) {
+          console.warn('Zuschneiden nicht möglich:', err);
+        }
+      }
+      if (!page.url) page.url = page.origUrl;
+      pages.push(page);
     } catch (err) {
       console.error(err);
       failed++;
@@ -121,6 +140,7 @@ function render() {
       el('span', { text: `Seite ${i + 1}` }),
       el('span', { class: 'tile-actions' },
         i > 0 ? el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} nach vorne`, text: '←', onclick: () => move(i, -1) }) : null,
+        el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} zuschneiden`, text: '✂︎', onclick: () => crop(i) }),
         el('button', { type: 'button', class: 'icon-btn', 'aria-label': `Seite ${i + 1} drehen`, text: '↻', onclick: () => rotate(i) }),
         el('button', { type: 'button', class: 'icon-btn danger', 'aria-label': `Seite ${i + 1} löschen`, text: '✕', onclick: () => removePage(i) })
       )
@@ -140,6 +160,46 @@ function previewScale(page) {
   return Math.min(1, frameW / shownH, frameH / shownW);
 }
 
+async function applyCrop(page, quad) {
+  const isFull = quad.every(([x, y], i) => {
+    const [fx, fy] = fullQuad(page.origW, page.origH)[i];
+    return Math.abs(x - fx) < 2 && Math.abs(y - fy) < 2;
+  });
+  if (page.url && page.url !== page.origUrl) URL.revokeObjectURL(page.url);
+  if (isFull) {
+    page.quad = null;
+    page.blob = page.original;
+    page.url = page.origUrl;
+    page.ratio = page.origH / page.origW;
+    return;
+  }
+  const result = await warpImage(page.original, quad);
+  page.quad = quad;
+  page.blob = result.blob;
+  page.url = URL.createObjectURL(result.blob);
+  page.ratio = result.height / result.width;
+}
+
+async function crop(i) {
+  const page = pages[i];
+  const quad = await openCropper({ url: page.origUrl, width: page.origW, height: page.origH, quad: page.quad, autoQuad: page.autoQuad });
+  if (!quad || !pages.includes(page)) return;
+  busy = true;
+  setStatus('Wird zugeschnitten …');
+  try {
+    await applyCrop(page, quad);
+    page.ocr = { status: 'pending', text: '' };
+  } catch (err) {
+    console.error(err);
+    setStatus('Zuschneiden hat nicht geklappt.');
+  } finally {
+    busy = false;
+  }
+  if ($('scan-status').textContent === 'Wird zugeschnitten …') setStatus('');
+  render();
+  startOcr();
+}
+
 function rotate(i) {
   pages[i].rotation = (pages[i].rotation + 90) % 360;
   pages[i].ocr = { status: 'pending', text: '' }; // gedreht → Text neu erkennen
@@ -154,8 +214,13 @@ function move(i, delta) {
   applySuggestion();
 }
 
+function releasePage(page) {
+  if (page.url && page.url !== page.origUrl) URL.revokeObjectURL(page.url);
+  URL.revokeObjectURL(page.origUrl);
+}
+
 function removePage(i) {
-  URL.revokeObjectURL(pages[i].url);
+  releasePage(pages[i]);
   pages.splice(i, 1);
   render();
   applySuggestion();
@@ -268,6 +333,10 @@ function applySuggestion() {
     $('doc-note').value = suggestion.note;
     mark('note');
   }
+  if (suggestion.dueDate && !dirty.dueDate) {
+    $('doc-due').value = suggestion.dueDate;
+    mark('dueDate');
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -298,12 +367,13 @@ async function onSave(event) {
     const text = pages.map((p) => (p.ocr.status === 'done' ? p.ocr.text : '')).join('\n\n').trim();
     const sender = suggestion && suggestion.sender ? suggestion.sender : null;
     const filter = $('scan-filter').checked;
+    const dueDate = $('doc-due').value || null;
 
     button.textContent = 'Wird verschlüsselt …';
     const finished = [];
     for (const page of pages) finished.push(await renderPage(page.blob, page.rotation, filter));
     const thumb = await makeThumb(finished[0]);
-    await saveDocument(key, { title, category, date, note, text, sender }, finished, thumb);
+    await saveDocument(key, { title, category, date, note, text, sender, dueDate, dueDone: false }, finished, thumb);
 
     lastFolderId = category;
     clearScan();
@@ -324,7 +394,7 @@ export function clearScan() {
   draftId++;
   ocrRunning = null;
   ocrError = false;
-  pages.forEach((page) => URL.revokeObjectURL(page.url));
+  pages.forEach(releasePage);
   pages = [];
   dirty = {};
   suggestion = null;

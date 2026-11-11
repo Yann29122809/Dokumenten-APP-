@@ -550,6 +550,145 @@ label.suggested::after {
   user-select: text;
 }
 
+/* ---------- Seiten-Kacheln: Beschriftung über den Knöpfen ---------- */
+.page-tile figcaption { flex-wrap: wrap; row-gap: 4px; }
+.page-tile figcaption > span:first-child { width: 100%; }
+.tile-actions { width: 100%; justify-content: space-between; }
+
+/* ---------- Face ID ---------- */
+.faceid-btn { width: 100%; }
+.faceid-btn[hidden] { display: none; }
+#faceid-form[hidden] { display: none; }
+
+/* ---------- Fristen ---------- */
+.due-icon { width: 18px; text-align: center; }
+.row-sub.due.is-soon, .due-box.is-soon .due-head span { color: #c77700; }
+.row-sub.due.is-overdue, .due-box.is-overdue .due-head span { color: #d13b3b; font-weight: 600; }
+
+.due-box {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.due-box.is-overdue { border-color: rgba(209, 59, 59, 0.5); }
+.due-box.is-soon { border-color: rgba(199, 119, 0, 0.5); }
+.due-box.is-done { opacity: 0.75; }
+
+.due-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 15px;
+}
+
+.due-head span { color: var(--muted); font-size: 14px; }
+.due-actions { display: flex; gap: 8px; margin-top: 10px; }
+.due-actions > button { flex: 1 1 0; padding: 10px; font-size: 15px; }
+.btn-text.small { font-size: 13px; padding: 8px 0 0; }
+
+/* ---------- Zuschneiden (Vollbild) ---------- */
+.cropper {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  color: #fff;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.crop-message {
+  margin: 0;
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 15px;
+}
+
+.crop-message.is-error { color: #ff6b6b; }
+
+.crop-stage {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+}
+
+.crop-img, .crop-svg {
+  position: absolute;
+  pointer-events: none;
+}
+
+.crop-shade { fill: rgba(0, 0, 0, 0.55); }
+.crop-outline { fill: none; stroke: #34c759; stroke-linejoin: round; }
+
+.crop-handle {
+  position: absolute;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  cursor: grab;
+}
+
+.crop-handle span {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(52, 199, 89, 0.35);
+  border: 3px solid #34c759;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4);
+}
+
+.crop-handle.is-active span { background: #34c759; transform: scale(1.2); }
+
+.crop-loupe {
+  position: absolute;
+  top: 12px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.crop-loupe[hidden] { display: none; }
+
+.crop-tools, .crop-actions {
+  display: flex;
+  gap: 10px;
+  padding: 8px 16px;
+}
+
+.crop-actions { padding-bottom: 12px; }
+
+.crop-btn {
+  flex: 1;
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.crop-btn:disabled { opacity: 0.35; }
+.crop-btn.primary { background: #34c759; border-color: #34c759; color: #04220f; }
+
 /* iOS-artiger Schalter */
 input.switch {
   -webkit-appearance: none;

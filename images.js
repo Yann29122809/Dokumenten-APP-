@@ -1,10 +1,10 @@
 // Bildverarbeitung: verkleinern, drehen, Scan-Filter, Vorschaubilder.
 
-const MAX_EDGE = 2200;    // längste Seite in Pixeln (gut lesbar, nicht zu groß)
+export const MAX_EDGE = 2200;    // längste Seite in Pixeln (gut lesbar, nicht zu groß)
 const JPEG_QUALITY = 0.82;
 const THUMB_EDGE = 320;
 
-function loadImage(blob) {
+export function loadImage(blob) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -14,7 +14,7 @@ function loadImage(blob) {
   });
 }
 
-function toJpeg(canvas, quality = JPEG_QUALITY) {
+export function toJpeg(canvas, quality = JPEG_QUALITY) {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {
       // Speicher auf dem iPhone sofort freigeben

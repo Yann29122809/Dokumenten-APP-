@@ -2,7 +2,7 @@
 
 // Bei jeder Änderung an den Dateien diese Nummer erhöhen,
 // damit Handys die neue Version laden.
-const CACHE_NAME = 'dokumente-v6';
+const CACHE_NAME = 'dokumente-v7';
 
 // Die großen Dateien der Texterkennung liegen in einem eigenen Speicher.
 // Er bleibt bei App-Updates erhalten, damit sie nicht jedes Mal neu
@@ -36,6 +36,10 @@ const APP_FILES = [
   './ocr.js',
   './suggest.js',
   './makepdf.js',
+  './faceid.js',
+  './crop.js',
+  './cropper.js',
+  './deadlines.js',
   './manifest.json',
   './icon.svg',
   './icon-192.png',
