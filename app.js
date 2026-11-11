@@ -4,15 +4,15 @@ import { getMeta, setMeta } from './db.js';
 import { formatBytes, toast } from './dom.js';
 import { hydrateIcons } from './icons.js';
 import { initScan, clearScan } from './scan.js';
-import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs, pageTextReady, getTrashed, renderTrash, renderSoon, openDoc } from './archive.js';
+import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs, pageTextReady, getTrashed, renderTrash, renderSoon, openDoc, updateDupBanner } from './archive.js';
 import { loadFolders, clearFolders } from './folders.js';
 import { stopOcr, setOcrLanguages } from './ocr.js';
 import { buildIndex, clearSearch, setPageText, hasText, getPageTextsFor } from './search.js';
 import { initOcrQueue, enqueue, kick as kickOcr, pauseQueue, onQueueChange } from './ocrqueue.js';
 import { needsMigration, runMigrations, markSchemaCurrent } from './migrations.js';
 import { initImport, loadInbox, clearInbox } from './importer.js';
-import { initDupCheck, checkBeforeSave, backfillFingerprints, scanAllDuplicates } from './dupcheck.js';
-import { loadDecisions, clearDecisions } from './duplicates.js';
+import { initDupCheck, checkBeforeSave, findAllPairs, scanAllDuplicates, reviewPending, revalidatePending } from './dupcheck.js';
+import { loadDecisions, clearDecisions, loadPending, clearPending, onPendingChange, getPending } from './duplicates.js';
 import { createBackup, saveBackupFile, readBackupFile, importBackup, BackupFormatError } from './backup.js';
 
 const $ = (id) => document.getElementById(id);
@@ -109,8 +109,9 @@ async function unlocked(key) {
     kickOcr();
     await loadInbox();
     await loadDecisions(key);
-    // Fingerabdrücke älterer Dokumente nebenbei nachholen
-    setTimeout(() => backfillFingerprints().catch((err) => console.warn(err)), 3000);
+    await loadPending(key, new Set(getDocs().map((d) => d.id)));
+    // Fingerabdrücke älterer Dokumente nachholen und Bestand auf neue Paare prüfen
+    setTimeout(() => revalidatePending().then(() => findAllPairs()).catch((err) => console.warn(err)), 3000);
   } catch (err) {
     console.error(err);
   }
@@ -203,6 +204,7 @@ function lock() {
   clearSearch();
   clearInbox();
   clearDecisions();
+  clearPending();
   $('soon-section').hidden = true;
   $('soon-section').replaceChildren();
   document.querySelectorAll('.dup-overlay').forEach((n) => n.remove());
@@ -457,7 +459,16 @@ initDupCheck({
   getKey: () => vaultKey,
   getDocs,
   getPageTexts: getPageTextsFor,
-  refresh: () => refreshArchive()
+  refresh: () => refreshArchive(),
+  openReview: () => { showScreen('archive'); reviewPending(); }
+});
+
+// Markierung am Reiter „Ablage“ und Hinweis in der Ablage
+onPendingChange((n) => {
+  const badge = $('archive-badge');
+  badge.hidden = !n;
+  badge.textContent = n > 9 ? '9+' : String(n);
+  updateDupBanner();
 });
 
 // Import (Eingang)
@@ -480,6 +491,8 @@ initImport({
 });
 
 initArchive({
+  getPendingCount: () => getPending().length,
+  openReview: () => reviewPending(),
   getKey: () => vaultKey,
   suspendAutoLock,
   resumeAutoLock,

@@ -19,7 +19,7 @@ import { getMeta, setMeta } from './db.js';
 
 const HASH_SIZE = 16;                 // 16 × 16 = 256 Bit
 const IMAGE_CLOSE = 0.12;             // ≤ 12 % abweichende Bits: sehr ähnliches Bild
-const IMAGE_VERY_CLOSE = 0.05;        // ≤ 5 %: praktisch dasselbe Bild
+const IMAGE_VERY_CLOSE = 0.04;        // ≤ 4 %: praktisch dasselbe Bild
 const TEXT_SIMILAR = 0.7;
 const TEXT_VERY_SIMILAR = 0.9;
 
@@ -76,6 +76,16 @@ function hamming(a, b) {
     while (x) { d += x & 1; x >>= 1; }
   }
   return d / (a.length * 4);
+}
+
+// Ein Bild-Fingerabdruck ist nur aussagekräftig, wenn das Bild genug Struktur
+// hat. Fast leere weiße Seiten ergeben fast gleiche Fingerabdrücke.
+function informative(hashes) {
+  if (!hashes || !hashes[0]) return false;
+  let ones = 0;
+  for (const c of hashes[0]) { let x = parseInt(c, 16); while (x) { ones += x & 1; x >>= 1; } }
+  const share = ones / (hashes[0].length * 4);
+  return share >= 0.25 && share <= 0.75;
 }
 
 /** Kleinste Abweichung zwischen zwei Bildern über alle Drehungen. */
@@ -136,10 +146,19 @@ export function compareFingerprints(a, b, metaA = {}, metaB = {}) {
   const imgDist = imageDistance(a.img, b.img);
   const textSim = a.words && b.words ? textSimilarity(a.words.join(' '), b.words.join(' ')) : null;
 
+  const hasTextA = Boolean(a.words && a.words.length >= 8);
+  const hasTextB = Boolean(b.words && b.words.length >= 8);
+
   let level = null;
-  if (imgDist <= IMAGE_CLOSE && textSim !== null && textSim >= TEXT_SIMILAR) level = 'inhalt';
-  else if (textSim !== null && textSim >= TEXT_VERY_SIMILAR) level = 'inhalt';
-  else if (imgDist <= IMAGE_VERY_CLOSE && (textSim === null || textSim >= TEXT_SIMILAR)) level = 'bild';
+  if (textSim !== null) {
+    // Beide haben Text: Inhalt entscheidet (mit Bild als Bestätigung)
+    if (textSim >= TEXT_VERY_SIMILAR) level = 'inhalt';
+    else if (textSim >= TEXT_SIMILAR && imgDist <= IMAGE_CLOSE) level = 'inhalt';
+  } else if (!hasTextA && !hasTextB) {
+    // Beide ohne Text: nur fast identisches Bild mit genug Struktur
+    if (imgDist <= IMAGE_VERY_CLOSE && informative(a.img) && informative(b.img)) level = 'bild';
+  }
+  // Nur eines hat Text (z. B. Texterkennung läuft noch): lieber nicht melden
   if (!level) return null;
 
   // Unterschiede in den Angaben (zur farbigen Markierung)
@@ -200,4 +219,59 @@ export function findMatches(fp, meta, docs, excludeId = null) {
     if (result) out.push({ doc, ...result });
   }
   return out.sort((a, b) => b.score - a.score);
+}
+
+// ---------------------------------------------------------------------
+// Offene Prüfungen: gefundene mögliche Duplikate, die noch auf deine
+// Entscheidung warten (verschlüsselt gespeichert, Anzeige in der Ablage)
+// ---------------------------------------------------------------------
+let pending = [];
+const pendingListeners = new Set();
+
+export const onPendingChange = (fn) => pendingListeners.add(fn);
+const emitPending = () => pendingListeners.forEach((fn) => fn(pending.length));
+
+export const getPending = () => pending;
+
+async function savePending(key) {
+  await setMeta('dupPending', await encryptJSON(key, pending));
+  emitPending();
+}
+
+export async function loadPending(key, existingIds) {
+  try {
+    const box = await getMeta('dupPending');
+    pending = box ? await decryptJSON(key, box) : [];
+  } catch {
+    pending = [];
+  }
+  // Paare mit gelöschten Dokumenten oder bereits entschiedene entfernen
+  const before = pending.length;
+  pending = pending.filter((p) => existingIds.has(p.a) && existingIds.has(p.b) && !isDecided(p.a, p.b));
+  if (pending.length !== before) await savePending(key);
+  else emitPending();
+}
+
+/** Neue Paare vormerken (doppelte Einträge werden ignoriert). Ergebnis: Anzahl neu. */
+export async function addPending(key, pairs) {
+  let added = 0;
+  for (const p of pairs) {
+    if (isDecided(p.a, p.b)) continue;
+    if (pending.some((x) => pairKey(x.a, x.b) === pairKey(p.a, p.b))) continue;
+    pending.push({ a: p.a, b: p.b, level: p.level, found: Date.now() });
+    added++;
+  }
+  if (added) await savePending(key);
+  return added;
+}
+
+export async function removePending(key, a, b) {
+  const k = pairKey(a, b);
+  pending = pending.filter((p) => pairKey(p.a, p.b) !== k);
+  await savePending(key);
+}
+
+export function clearPending() {
+  pending = [];
+  emitPending();
 }

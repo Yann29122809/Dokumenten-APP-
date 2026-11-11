@@ -20,6 +20,7 @@ let ctx = null;
 // Seite: { original, origUrl, origW, origH, quad, autoQuad, blob, url, rotation, ratio, ocr: { status, text } }
 let pages = [];
 let busy = false;
+let preparing = 0;   // Bilder, die gerade eingelesen werden (Platzhalter mit Animation)
 let draftId = 0;     // wird beim Verwerfen erhöht → laufende Erkennung ignoriert
 let ocrRunning = null;
 let ocrError = false;
@@ -93,6 +94,8 @@ async function addFiles(files) {
   busy = true;
   setStatus(files.length > 1 ? `${files.length} Bilder werden vorbereitet …` : 'Bild wird vorbereitet …');
   let failed = 0;
+  preparing = files.length;
+  render();
   for (const file of files) {
     try {
       const original = await prepareImage(file);
@@ -117,7 +120,10 @@ async function addFiles(files) {
       console.error(err);
       failed++;
     }
+    preparing = Math.max(0, preparing - 1);
+    render();
   }
+  preparing = 0;
   busy = false;
   setStatus(failed ? `${failed} Bild(er) konnten nicht gelesen werden.` : '');
   render();
@@ -128,7 +134,7 @@ async function addFiles(files) {
 // Seiten anzeigen
 // ---------------------------------------------------------------------
 function render() {
-  const hasPages = pages.length > 0;
+  const hasPages = pages.length > 0 || preparing > 0;
   $('scan-empty').hidden = hasPages;
   $('scan-draft').hidden = !hasPages;
 
@@ -152,6 +158,12 @@ function render() {
       )
     )
   )));
+  // Platzhalter für Bilder, die gerade eingelesen werden
+  for (let i = 0; i < preparing; i++) {
+    $('scan-pages').append(el('figure', { class: 'page-tile' },
+      el('div', { class: 'page-frame scanning' }, el('span', { class: 'scan-label', text: 'Wird eingelesen …' })),
+      el('figcaption', {}, el('span', { text: 'Neue Seite' }))));
+  }
   $('scan-count').textContent = pages.length === 1 ? '1 Seite' : `${pages.length} Seiten`;
   renderOcrStatus();
 }
@@ -279,7 +291,22 @@ function startOcr() {
   return ocrRunning;
 }
 
+// Scanner-Animation auf den Seiten, deren Text gerade erkannt wird
+function updateScanMarks() {
+  const frames = document.querySelectorAll('#scan-pages .page-tile .page-frame');
+  pages.forEach((page, i) => {
+    const frame = frames[i];
+    if (!frame) return;
+    const active = ctx.isOcrEnabled() && !ocrError && ['pending', 'running'].includes(page.ocr.status);
+    frame.classList.toggle('scanning', active);
+    let label = frame.querySelector('.scan-label');
+    if (active && !label) frame.append(el('span', { class: 'scan-label', text: 'Text wird gelesen …' }));
+    if (!active && label) label.remove();
+  });
+}
+
 function renderOcrStatus() {
+  updateScanMarks();
   const box = $('ocr-status');
   box.className = 'ocr-status';
   if (!ctx.isOcrEnabled() || !pages.length) { box.hidden = true; box.replaceChildren(); return; }

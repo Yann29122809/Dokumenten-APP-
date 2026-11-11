@@ -337,7 +337,7 @@ function renderRoot() {
     docs.length ? '' : el('p', { class: 'hint center', text: 'Noch keine Dokumente abgelegt. Scanne dein erstes Dokument unter „Scannen“.' })
   );
 
-  show(queueChip(), searchBox, recent, filters, results, folderList);
+  show(dupBanner(), queueChip(), searchBox, recent, filters, results, folderList);
   filters.hidden = !query.trim();
   showRecent();
   if (query) update();
@@ -382,6 +382,32 @@ function searchRow(hit) {
     ),
     icon('right', 'icon chevron-icon')
   );
+}
+
+/** Hinweis „Mögliche Duplikate gefunden“ – antippen öffnet die Prüfung. */
+function dupBanner() {
+  const box = el('div', { id: 'dup-banner' });
+  fillDupBanner(box);
+  return box;
+}
+
+function fillDupBanner(box) {
+  const n = ctx.getPendingCount();
+  box.hidden = !n;
+  if (!n) { box.replaceChildren(); return; }
+  box.replaceChildren(el('button', { type: 'button', class: 'dup-banner', onclick: () => ctx.openReview() },
+    el('span', { class: 'dup-banner-icon' }, icon('stack'), el('span', { class: 'dup-banner-count', text: String(n) })),
+    el('span', { class: 'grow' },
+      el('strong', { text: n === 1 ? 'Mögliches Duplikat gefunden' : `${n} mögliche Duplikate gefunden` }),
+      el('span', { text: 'Tippen zum Prüfen – nach links wischen: behalten, nach rechts: Duplikat' })
+    ),
+    icon('right', 'icon chevron-icon')));
+}
+
+/** Von außen aufrufen, wenn sich die offenen Prüfungen ändern. */
+export function updateDupBanner() {
+  const box = document.getElementById('dup-banner');
+  if (box) fillDupBanner(box);
 }
 
 /** Kleiner Hinweis, solange die Texterkennung im Hintergrund arbeitet. */

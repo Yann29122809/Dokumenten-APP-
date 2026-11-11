@@ -2,7 +2,7 @@
 
 // Bei jeder Änderung an den Dateien diese Nummer erhöhen,
 // damit Handys die neue Version laden.
-const CACHE_NAME = 'dokumente-v13';
+const CACHE_NAME = 'dokumente-v15';
 
 // Die großen Dateien der Texterkennung liegen in einem eigenen Speicher.
 // Er bleibt bei App-Updates erhalten, damit sie nicht jedes Mal neu

@@ -1,12 +1,18 @@
 // Ablauf der Duplikat-Prüfung:
-//  - beim Speichern (Scan und Import): neues Dokument gegen den Bestand
-//  - „Duplikate suchen“ in den Einstellungen: Bestand in kleinen Portionen
-//  - Fingerabdrücke älterer Dokumente werden nach dem Entsperren nebenbei
-//    nachgeholt (verschlüsselt in den Angaben gespeichert)
-// Nichts wird automatisch gelöscht: Entfernte Dokumente kommen 30 Tage
-// in den Papierkorb, jede Aktion lässt sich 5 Sekunden rückgängig machen.
+//  - Beim Speichern (Scan und Import) wird nichts unterbrochen. Findet die App
+//    ein mögliches Duplikat, merkt sie das Paar vor („offene Prüfung“).
+//  - In der Ablage erscheint dann oben ein Hinweis, am Reiter eine Markierung.
+//    Antippen öffnet die Prüfung: links wischen = kein Duplikat (wird gemerkt,
+//    damit nie wieder gefragt wird), rechts wischen = Duplikat (eines bleibt,
+//    das andere kommt in den Papierkorb).
+//  - Nach dem Entsperren werden Fingerabdrücke älterer Dokumente nebenbei
+//    nachgeholt und der Bestand auf neue Paare geprüft.
+// Nichts wird automatisch gelöscht: Papierkorb 30 Tage, Rückgängig 5 Sekunden.
 
-import { makeFingerprint, fingerprintFor, findMatches, compareFingerprints, isDecided, rememberNotDuplicate, forgetDecision } from './duplicates.js';
+import {
+  makeFingerprint, fingerprintFor, findMatches, compareFingerprints, isDecided,
+  rememberNotDuplicate, forgetDecision, addPending, removePending, getPending
+} from './duplicates.js';
 import { openDuplicateReview } from './dupreview.js';
 import { updateMeta, loadThumb, loadOriginal, moveToTrash, restoreFromTrash } from './docs.js';
 import { folderLabel, existingFolderId } from './folders.js';
@@ -15,6 +21,7 @@ import { toast } from './dom.js';
 
 let ctx = null;
 let backfillRunning = false;
+let reviewRunning = false;
 
 export function initDupCheck(context) {
   ctx = context;
@@ -52,6 +59,55 @@ export async function backfillFingerprints(onProgress = () => {}) {
   }
 }
 
+/** Ganzen Bestand vergleichen und neue Paare vormerken. Ergebnis: Anzahl neu. */
+export async function findAllPairs(onStatus = () => {}) {
+  await backfillFingerprints((n, total) => onStatus(`Fingerabdrücke: ${n} von ${total}`));
+  const docs = ctx.getDocs().filter((d) => d.meta.fp);
+  onStatus('Dokumente werden verglichen …');
+  const pairs = [];
+  for (let i = 0; i < docs.length; i++) {
+    for (let j = i + 1; j < docs.length; j++) {
+      if (isDecided(docs[i].id, docs[j].id)) continue;
+      const r = compareFingerprints(docs[i].meta.fp, docs[j].meta.fp, docs[i].meta, docs[j].meta);
+      if (r) pairs.push({ a: docs[i].id, b: docs[j].id, level: r.level });
+    }
+    if (i % 25 === 24) await new Promise((r) => setTimeout(r, 0));
+  }
+  return ctx.getKey() ? addPending(ctx.getKey(), pairs) : 0;
+}
+
+/**
+ * Vor dem Speichern: Fingerabdruck berechnen. Es wird nie unterbrochen –
+ * mögliche Duplikate werden nach dem Speichern zur Prüfung vorgemerkt.
+ * Ergebnis: { decision: 'save', extraMeta, afterSave(newId) }
+ */
+export async function checkBeforeSave(candidate) {
+  const first = candidate.pages[0];
+  const thumb = await makeThumb(first.blob);
+  const text = (candidate.texts || []).map((t) => (t && t.text) || '').join('\n');
+  const fp = await makeFingerprint({
+    fileBytes: candidate.kind === 'pdf' ? candidate.bytes : null,
+    firstPage: first.blob,
+    thumb,
+    text,
+    meta: candidate.meta
+  });
+  const meta = { ...candidate.meta, pageCount: candidate.pages.length };
+  const extraMeta = { fp, size: candidate.sizeBytes || first.blob.size, pixels: (first.width || 0) * (first.height || 0) };
+  return {
+    decision: 'save',
+    extraMeta,
+    afterSave: async (newId) => {
+      const matches = findMatches(fp, meta, ctx.getDocs(), newId);
+      if (!matches.length) return;
+      const added = await addPending(ctx.getKey(), matches.map((m) => ({ a: newId, b: m.doc.id, level: m.level })));
+      if (added) {
+        toast('Mögliches Duplikat gefunden', 'ok', { label: 'Prüfen', onClick: () => ctx.openReview() });
+      }
+    }
+  };
+}
+
 async function cardFor(doc, label) {
   const thumb = await loadThumb(ctx.getKey(), doc).catch(() => null);
   return {
@@ -66,120 +122,92 @@ async function cardFor(doc, label) {
   };
 }
 
-/**
- * Vor dem Speichern prüfen.
- * candidate: { kind, bytes?, pages: [{ blob, width, height }], texts: [{ text }], meta, sizeBytes, onUndoSkip? }
- * Ergebnis: { decision: 'save' | 'skip' | 'later', fp, afterSave(newId) }
- */
-export async function checkBeforeSave(candidate) {
-  const first = candidate.pages[0];
-  const thumb = await makeThumb(first.blob);
-  const text = (candidate.texts || []).map((t) => (t && t.text) || '').join('\n');
-  const fp = await makeFingerprint({
-    fileBytes: candidate.kind === 'pdf' ? candidate.bytes : null,
-    firstPage: first.blob,
-    thumb,
-    text,
-    meta: candidate.meta
-  });
-  const meta = { ...candidate.meta, pageCount: candidate.pages.length };
-  const matches = findMatches(fp, meta, ctx.getDocs());
-  const extraMeta = { fp, size: candidate.sizeBytes || first.blob.size, pixels: (first.width || 0) * (first.height || 0) };
-  if (!matches.length) return { decision: 'save', extraMeta, afterSave: () => {} };
+/** Offene Prüfungen nacheinander zeigen. */
+export async function reviewPending() {
+  if (reviewRunning || !ctx.getKey()) return;
+  reviewRunning = true;
+  try {
+    const queue = [...getPending()];
+    for (const [index, pair] of queue.entries()) {
+      if (!ctx.getKey()) break;
+      const docs = ctx.getDocs();
+      const a = docs.find((d) => d.id === pair.a);
+      const b = docs.find((d) => d.id === pair.b);
+      if (!a || !b) { await removePending(ctx.getKey(), pair.a, pair.b); continue; }
 
-  const match = matches[0];
-  const newThumbUrl = URL.createObjectURL(thumb);
-  const result = await openDuplicateReview({
-    mode: 'new',
-    level: match.level,
-    differences: match.differences,
-    a: { label: 'Neu', title: meta.title, folder: folderLabel(existingFolderId(meta.category)), date: meta.date, pages: meta.pageCount, size: extraMeta.size, pixels: extraMeta.pixels, thumbUrl: newThumbUrl },
-    b: await cardFor(match.doc, 'Schon vorhanden')
-  });
-  URL.revokeObjectURL(newThumbUrl);
+      const cmp = compareFingerprints(a.meta.fp, b.meta.fp, a.meta, b.meta) || { level: pair.level, differences: [] };
+      const cardA = await cardFor(a, 'Neuer');
+      const cardB = await cardFor(b, 'Älter');
+      const result = await openDuplicateReview({
+        mode: 'stored', level: cmp.level, differences: cmp.differences, a: cardA, b: cardB,
+        progress: `${index + 1} von ${queue.length}`
+      });
+      [cardA, cardB].forEach((c) => c.thumbUrl && URL.revokeObjectURL(c.thumbUrl));
 
-  if (result.action === 'skip') return { decision: 'later', extraMeta, afterSave: () => {} };
-  if (result.action === 'duplicate') {
-    toast('Nicht gespeichert – Duplikat', 'ok', candidate.onUndoSkip ? { label: 'Rückgängig', onClick: candidate.onUndoSkip } : null);
-    return { decision: 'skip', extraMeta, afterSave: () => {} };
-  }
-  // Kein Duplikat: Entscheidung für dieses Paar merken
-  return {
-    decision: 'save',
-    extraMeta,
-    afterSave: async (newId, newDoc) => {
-      await rememberNotDuplicate(ctx.getKey(), newId, match.doc.id);
-      toast('Beide behalten', 'ok', {
+      if (result.action === 'skip') continue; // bleibt in der Liste
+
+      if (result.action === 'keep') {
+        await rememberNotDuplicate(ctx.getKey(), a.id, b.id);
+        await removePending(ctx.getKey(), a.id, b.id);
+        toast('Gemerkt: kein Duplikat', 'ok', {
+          label: 'Rückgängig',
+          onClick: async () => {
+            await forgetDecision(ctx.getKey(), a.id, b.id);
+            await addPending(ctx.getKey(), [pair]);
+          }
+        });
+        continue;
+      }
+
+      // Duplikat: ausgewähltes behalten, das andere in den Papierkorb, Angaben übernehmen
+      const kept = result.keep === 'a' ? a : b;
+      const removed = result.keep === 'a' ? b : a;
+      const before = { ...kept.meta };
+      const merged = {};
+      if (!kept.meta.note && removed.meta.note) merged.note = removed.meta.note;
+      if (!kept.meta.reminder && removed.meta.reminder) merged.reminder = removed.meta.reminder;
+      if (!kept.meta.dueDate && removed.meta.dueDate) { merged.dueDate = removed.meta.dueDate; merged.dueDone = removed.meta.dueDone; }
+      if (!kept.meta.sender && removed.meta.sender) merged.sender = removed.meta.sender;
+      if (!kept.meta.tags && removed.meta.tags) merged.tags = removed.meta.tags;
+      if (Object.keys(merged).length) kept.meta = await updateMeta(ctx.getKey(), kept, merged);
+      await moveToTrash(ctx.getKey(), removed);
+      await removePending(ctx.getKey(), a.id, b.id);
+      await ctx.refresh();
+      toast('In den Papierkorb gelegt', 'ok', {
         label: 'Rückgängig',
         onClick: async () => {
-          await forgetDecision(ctx.getKey(), newId, match.doc.id);
-          const doc = ctx.getDocs().find((d) => d.id === newId) || newDoc;
-          if (doc) await moveToTrash(ctx.getKey(), doc);
+          await restoreFromTrash(ctx.getKey(), removed);
+          if (Object.keys(merged).length) await updateMeta(ctx.getKey(), kept, before);
+          await addPending(ctx.getKey(), [pair]);
           await ctx.refresh();
-          toast('Neues Dokument in den Papierkorb gelegt');
+          toast('Wiederhergestellt');
         }
       });
     }
-  };
+  } finally {
+    reviewRunning = false;
+    await ctx.refresh();
+  }
 }
 
-/** Ganzen Bestand prüfen (Button „Duplikate suchen“). */
+/** Button „Duplikate suchen“: Bestand prüfen und gleich zur Prüfung. */
 export async function scanAllDuplicates(onStatus = () => {}) {
-  onStatus('Fingerabdrücke werden berechnet …');
-  await backfillFingerprints((n, total) => onStatus(`Fingerabdrücke: ${n} von ${total}`));
-  const docs = ctx.getDocs().filter((d) => d.meta.fp);
-  onStatus('Dokumente werden verglichen …');
-  const pairs = [];
-  for (let i = 0; i < docs.length; i++) {
-    for (let j = i + 1; j < docs.length; j++) {
-      if (isDecided(docs[i].id, docs[j].id)) continue;
-      const r = compareFingerprints(docs[i].meta.fp, docs[j].meta.fp, docs[i].meta, docs[j].meta);
-      if (r) pairs.push({ a: docs[i], b: docs[j], ...r });
-    }
-    if (i % 25 === 24) await new Promise((r) => setTimeout(r, 0));
-  }
-  if (!pairs.length) { onStatus('Keine Duplikate gefunden'); return 0; }
+  const added = await findAllPairs(onStatus);
+  const open = getPending().length;
+  if (!open) { onStatus('Keine Duplikate gefunden'); return 0; }
+  onStatus(added ? `${added} neu gefunden` : `${open} offen`);
+  await reviewPending();
+  onStatus(getPending().length ? `${getPending().length} offen` : 'Alles geprüft');
+  return open;
+}
 
-  let handled = 0;
-  for (const [index, pair] of pairs.entries()) {
-    if (!ctx.getKey()) break;
-    // Schon in diesem Durchgang entfernt?
-    const current = ctx.getDocs();
-    if (!current.some((d) => d.id === pair.a.id) || !current.some((d) => d.id === pair.b.id)) continue;
-    const cardA = await cardFor(pair.a, 'Dokument A');
-    const cardB = await cardFor(pair.b, 'Dokument B');
-    onStatus(`Prüfen: ${index + 1} von ${pairs.length}`);
-    const result = await openDuplicateReview({ mode: 'stored', level: pair.level, differences: pair.differences, a: cardA, b: cardB, progress: `${index + 1} von ${pairs.length}` });
-    [cardA, cardB].forEach((c) => c.thumbUrl && URL.revokeObjectURL(c.thumbUrl));
-    if (result.action === 'skip') continue;
-    handled++;
-    if (result.action === 'keep') {
-      await rememberNotDuplicate(ctx.getKey(), pair.a.id, pair.b.id);
-      toast('Beide behalten', 'ok', { label: 'Rückgängig', onClick: () => forgetDecision(ctx.getKey(), pair.a.id, pair.b.id) });
-      continue;
-    }
-    // Duplikat: eines behalten, das andere in den Papierkorb – Angaben übernehmen
-    const kept = result.keep === 'a' ? pair.a : pair.b;
-    const removed = result.keep === 'a' ? pair.b : pair.a;
-    const before = { ...kept.meta };
-    const merged = {};
-    if (!kept.meta.note && removed.meta.note) merged.note = removed.meta.note;
-    if (!kept.meta.dueDate && removed.meta.dueDate) { merged.dueDate = removed.meta.dueDate; merged.dueDone = removed.meta.dueDone; }
-    if (!kept.meta.sender && removed.meta.sender) merged.sender = removed.meta.sender;
-    if (!kept.meta.tags && removed.meta.tags) merged.tags = removed.meta.tags;
-    if (Object.keys(merged).length) kept.meta = await updateMeta(ctx.getKey(), kept, merged);
-    await moveToTrash(ctx.getKey(), removed);
-    await ctx.refresh();
-    toast('In den Papierkorb gelegt', 'ok', {
-      label: 'Rückgängig',
-      onClick: async () => {
-        await restoreFromTrash(ctx.getKey(), removed);
-        if (Object.keys(merged).length) await updateMeta(ctx.getKey(), kept, before);
-        await ctx.refresh();
-        toast('Wiederhergestellt');
-      }
-    });
+/** Offene Paare mit den aktuellen Regeln erneut prüfen (entfernt Fehlalarme). */
+export async function revalidatePending() {
+  const docs = new Map(ctx.getDocs().map((d) => [d.id, d]));
+  for (const p of [...getPending()]) {
+    const a = docs.get(p.a);
+    const b = docs.get(p.b);
+    const still = a && b && a.meta.fp && b.meta.fp && compareFingerprints(a.meta.fp, b.meta.fp, a.meta, b.meta);
+    if (!still) await removePending(ctx.getKey(), p.a, p.b);
   }
-  onStatus(handled ? `${handled} Paar(e) bearbeitet` : 'Fertig');
-  return pairs.length;
 }

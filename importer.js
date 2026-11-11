@@ -83,6 +83,8 @@ async function addFiles(files) {
       pages: null,
       selected: true
     };
+    // Bilder sofort als Vorschau zeigen, damit die Scanner-Animation darüber laufen kann
+    if (kind === 'image') item.thumbUrl = URL.createObjectURL(new Blob([bytes], { type: info.type || 'image/jpeg' }));
     items.set(item.id, item);
     await persist(item);
   }
@@ -357,7 +359,8 @@ const STATUS_TEXT = {
 function fillCard(card, item) {
   const st = item.state;
   const head = el('div', { class: 'inbox-head' },
-    el('span', { class: 'inbox-thumb' }, item.thumbUrl ? el('img', { src: item.thumbUrl, alt: '' }) : icon(st.kind === 'pdf' ? 'file' : 'photos')),
+    el('span', { class: `inbox-thumb${['waiting', 'reading', 'ocr'].includes(st.status) ? ' scanning' : ''}` },
+      item.thumbUrl ? el('img', { src: item.thumbUrl, alt: '' }) : icon(st.kind === 'pdf' ? 'file' : 'photos')),
     el('span', { class: 'inbox-meta' },
       el('strong', { class: 'inbox-name', text: item.info.name }),
       el('span', { class: 'inbox-sub', text: [

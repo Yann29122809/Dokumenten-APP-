@@ -30,7 +30,11 @@ function drawScaled(img, maxEdge) {
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(img.naturalWidth * scale);
   canvas.height = Math.round(img.naturalHeight * scale);
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  const ctx = canvas.getContext('2d');
+  // Weißer Hintergrund: durchsichtige Bereiche (z. B. bei PNG) würden in JPEG sonst schwarz
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   return canvas;
 }
 
@@ -79,6 +83,8 @@ export async function renderPage(blob, rotation = 0, scanFilter = false) {
   canvas.width = sideways ? h : w;
   canvas.height = sideways ? w : h;
   const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.translate(canvas.width / 2, canvas.height / 2);
   ctx.rotate((turn * Math.PI) / 180);
   ctx.drawImage(img, -w / 2, -h / 2);

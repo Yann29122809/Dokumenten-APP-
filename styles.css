@@ -1660,3 +1660,105 @@ input.switch:checked { background: var(--accent); }
 .check.lead { margin: 0; font-size: 14px; }
 .check.lead input { width: 20px; height: 20px; }
 .edit-reminder { display: flex; flex-direction: column; gap: 4px; }
+
+/* =====================================================================
+   1.1 – Duplikate gegenüber, Hinweis in der Ablage, Scanner-Animation
+   ===================================================================== */
+/* Zwei Karten nebeneinander */
+.dup-stack { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 6px; }
+.dup-vs { align-self: center; }
+.dup-card { flex-direction: column; gap: 8px; padding: 10px; }
+.dup-thumb { width: 100%; height: auto; aspect-ratio: 3 / 4; }
+.dup-info { font-size: 13px; }
+.dup-title { font-size: 14px; }
+.dup-keep { font-size: 13px; }
+
+/* Hinweis oben in der Ablage */
+#dup-banner[hidden] { display: none; }
+.dup-banner {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--warning) 22%, var(--surface)), var(--surface));
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--warning) 60%, transparent), var(--shadow);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  animation: banner-in 0.35s ease-out;
+}
+.dup-banner .grow { display: flex; flex-direction: column; gap: 2px; }
+.dup-banner .grow span { font-size: 13px; color: var(--muted); }
+.dup-banner-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px; background: var(--warning); color: #fff; flex-shrink: 0; }
+.dup-banner-count { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: var(--danger); color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; }
+@keyframes banner-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+/* Markierung am Reiter */
+.tab { position: relative; }
+.tab-badge {
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 8px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.tab-badge[hidden] { display: none; }
+
+/* Scanner-Animation: ein Lichtstreifen fährt über das Bild, solange gelesen wird */
+.scanning { position: relative; overflow: hidden; }
+.scanning::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+}
+.scanning::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 22%;
+  z-index: 2;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--accent) 45%, transparent) 70%, #fff 96%, transparent);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 80%, transparent);
+  animation: scan-line 1.6s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes scan-line { from { transform: translateY(-100%); } to { transform: translateY(460%); } }
+.scan-label {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  z-index: 3;
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(28, 26, 41, 0.75);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.inbox-thumb.scanning { width: 96px; height: 128px; }
+@media (prefers-reduced-motion: reduce) {
+  .scanning::after { animation: none; top: 40%; }
+  .dup-banner { animation: none; }
+}
