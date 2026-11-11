@@ -2,7 +2,9 @@ import { createVault, openVault, changeVaultPassword, WrongPasswordError } from 
 import { getMeta, setMeta } from './db.js';
 import { formatBytes } from './dom.js';
 import { initScan, clearScan } from './scan.js';
-import { initArchive, refreshArchive, clearArchive, showCategories, documentCount } from './archive.js';
+import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs } from './archive.js';
+import { loadFolders, clearFolders } from './folders.js';
+import { stopOcr } from './ocr.js';
 import { createBackup, saveBackupFile, readBackupFile, importBackup, BackupFormatError } from './backup.js';
 
 const $ = (id) => document.getElementById(id);
@@ -11,7 +13,7 @@ const MIN_PASSWORD_LENGTH = 8;
 // Der entsperrte Schlüssel lebt nur im Arbeitsspeicher, solange die App offen ist.
 let vaultKey = null;
 let vaultRecord = null;
-let settings = { autoLockMinutes: 5, lastBackup: null };
+let settings = { autoLockMinutes: 5, lastBackup: null, ocrAuto: true };
 
 const saveSettings = () => setMeta('settings', settings);
 
@@ -38,7 +40,7 @@ function showScreen(name) {
     }
   });
   document.querySelector('.app-main').scrollTop = 0;
-  if (name === 'archive') showCategories();
+  if (name === 'archive') showRoot();
   if (name === 'settings') updateInfo();
 }
 
@@ -83,6 +85,7 @@ async function unlocked(key) {
   document.body.classList.remove('locked');
   resetInactivityTimer();
   try {
+    await loadFolders(key);
     await refreshArchive();
   } catch (err) {
     console.error(err);
@@ -95,6 +98,8 @@ function lock() {
   // Alles Entschlüsselte aus dem Speicher und vom Bildschirm entfernen
   clearScan();
   clearArchive();
+  clearFolders();
+  stopOcr();
   resetBackupUi();
   clearPasswordFields();
   $('unlock-error').textContent = '';
@@ -235,10 +240,14 @@ document.addEventListener('visibilitychange', () => {
 // =====================================================================
 // Bildschirme Scannen und Ablage
 // =====================================================================
+const isOcrEnabled = () => settings.ocrAuto !== false;
+
 initScan({
   getKey: () => vaultKey,
   suspendAutoLock,
   resumeAutoLock,
+  isOcrEnabled,
+  getDocs,
   onSaved: () => refreshArchive().catch((err) => console.error(err))
 });
 
@@ -246,6 +255,7 @@ initArchive({
   getKey: () => vaultKey,
   suspendAutoLock,
   resumeAutoLock,
+  isOcrEnabled,
   getLastBackup: () => settings.lastBackup,
   goToBackup: () => {
     showScreen('settings');
@@ -257,6 +267,11 @@ initArchive({
 // Einstellungen: Sicherheit
 // =====================================================================
 $('lock-now').addEventListener('click', lock);
+
+$('ocr-toggle').addEventListener('change', async (event) => {
+  settings.ocrAuto = event.target.checked;
+  await saveSettings();
+});
 
 $('autolock-select').addEventListener('change', async (event) => {
   settings.autoLockMinutes = Number(event.target.value);
@@ -412,6 +427,7 @@ $('import-form').addEventListener('submit', async (event) => {
     clearPasswordFields();
     resetBackupUi();
     const parts = [`${result.imported} Dokument(e) übernommen.`];
+    if (result.foldersAdded) parts.push(`${result.foldersAdded} Ablageort(e) ergänzt.`);
     if (result.skipped) parts.push(`${result.skipped} waren schon vorhanden.`);
     $('import-result').textContent = parts.join(' ');
     $('import-result').hidden = false;
@@ -474,6 +490,7 @@ async function start() {
     const savedSettings = await getMeta('settings');
     if (savedSettings) settings = { ...settings, ...savedSettings };
     $('autolock-select').value = String(settings.autoLockMinutes);
+    $('ocr-toggle').checked = isOcrEnabled();
 
     vaultRecord = await getMeta('vault');
     showLockView(vaultRecord ? 'unlock' : 'setup');

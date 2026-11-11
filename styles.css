@@ -455,6 +455,132 @@ img.scan-filter { filter: grayscale(1) contrast(1.35) brightness(1.08); }
 
 #import-result[hidden] { display: none; }
 
+/* ---------- Ordner, Suche, Texterkennung ---------- */
+.row-title { display: block; }
+.row-sub { display: block; font-size: 13px; color: var(--muted); }
+
+.section-label {
+  margin: 18px 0 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.btn-secondary.full { width: 100%; margin-top: 12px; }
+
+.view-title .dot { display: inline-block; vertical-align: middle; }
+
+input[type="search"].search-input {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin: 4px 0 14px;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 17px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.ocr-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.ocr-status[hidden] { display: none; }
+.ocr-status.is-done { color: #2f8f5b; }
+.ocr-status.is-error { color: #d13b3b; }
+.ocr-status .btn-text { padding: 0; font-size: 14px; }
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Vorgeschlagene Felder dezent markieren */
+label.suggested > input,
+label.suggested > select,
+label.suggested > textarea {
+  border-color: #2f8f5b;
+  background-color: rgba(47, 143, 91, 0.08);
+}
+
+label.suggested::after {
+  content: 'Vorschlag aus dem Text';
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #2f8f5b;
+}
+
+.ocr-text { margin-top: 16px; }
+.ocr-text summary { cursor: pointer; color: var(--accent); padding: 6px 0; }
+
+.ocr-text pre {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 14px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* iOS-artiger Schalter */
+input.switch {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 51px;
+  height: 31px;
+  flex-shrink: 0;
+  margin: 0;
+  border-radius: 31px;
+  background: var(--border);
+  transition: background 0.2s;
+  cursor: pointer;
+}
+
+input.switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s;
+}
+
+input.switch:checked { background: #34c759; }
+input.switch:checked::after { transform: translateX(20px); }
+
 .error   { color: #d13b3b; font-size: 14px; margin: 0; min-height: 0; }
 .success { color: #2f8f5b; font-size: 14px; margin: 0; }
 .error:empty, .success:empty { display: none; }

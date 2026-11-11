@@ -1,24 +1,17 @@
 // Dokumente verschlüsselt speichern, lesen, ändern und löschen.
-// Alles – Titel, Kategorie, Datum, Notiz, Vorschaubild und Seiten – wird
-// verschlüsselt abgelegt. Unverschlüsselt ist nur eine zufällige ID.
+// Alles – Titel, Ablageort, Datum, Notiz, erkannter Text, Vorschaubild und
+// Seiten – wird verschlüsselt abgelegt. Unverschlüsselt ist nur eine zufällige ID.
+//
+// Angaben (meta): { title, category (= Ordner-ID), date, note, text, sender,
+//                   pageCount, created, updated }
 
 import { encryptBytes, decryptBytes, encryptJSON, decryptJSON } from './crypto.js';
 import * as db from './db.js';
 
-export const CATEGORIES = [
-  { id: 'invoice',   label: 'Rechnungen',          singular: 'Rechnung' },
-  { id: 'bank',      label: 'Bank',                singular: 'Bank' },
-  { id: 'insurance', label: 'Versicherung',        singular: 'Versicherung' },
-  { id: 'letter',    label: 'Briefe',              singular: 'Brief' },
-  { id: 'payslip',   label: 'Gehaltsabrechnungen', singular: 'Gehaltsabrechnung' }
-];
-
-export const categoryById = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES[3];
-
 const blobBytes = async (blob) => new Uint8Array(await blob.arrayBuffer());
 const jpeg = (bytes) => new Blob([bytes], { type: 'image/jpeg' });
 
-/** Neues Dokument speichern. meta: { title, category, date, note } */
+/** Neues Dokument speichern. */
 export async function saveDocument(key, meta, pageBlobs, thumbBlob) {
   const id = crypto.randomUUID();
   const now = Date.now();

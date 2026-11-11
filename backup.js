@@ -13,6 +13,7 @@
 import { openVault, encryptBytes, decryptBytes, encryptJSON, decryptJSON } from './crypto.js';
 import * as db from './db.js';
 import { todayISO } from './dom.js';
+import { mergeFolders } from './folders.js';
 
 const MAGIC = 'DOKBAK01';
 const FORMAT = 'dokumente-backup';
@@ -57,9 +58,13 @@ export async function createBackup(key) {
     entries.push({ id: record.id, meta: addBox(record.meta), thumb: addBox(record.thumb), pages: pages.map(addBox) });
   }
 
+  // Eigene Ablageorte (verschlüsselt) mitsichern
+  const foldersBox = await db.getMeta('folders');
+
   const header = {
     format: FORMAT,
-    version: 1,
+    version: 2,
+    folders: foldersBox ? addBox(foldersBox) : null,
     created: new Date().toISOString(),
     vault: {
       kdf: vault.kdf,
@@ -123,7 +128,7 @@ export async function readBackupFile(file) {
   } catch {
     throw new BackupFormatError('Die Backup-Datei ist beschädigt.');
   }
-  if (header.format !== FORMAT || header.version !== 1 || !Array.isArray(header.docs)) {
+  if (header.format !== FORMAT || ![1, 2].includes(header.version) || !Array.isArray(header.docs)) {
     throw new BackupFormatError('Diese Backup-Version wird nicht unterstützt.');
   }
   return { header, body: bytes.subarray(12 + headerLength) };
@@ -149,6 +154,12 @@ export async function importBackup(currentKey, backup, backupPassword, onProgres
     return { iv: fromB64(ref.iv), data: body.subarray(ref.off, ref.off + ref.len) };
   };
 
+  // Zuerst die Ablageorte übernehmen, damit die Dokumente ihren Ordner finden
+  let foldersAdded = 0;
+  if (header.folders) {
+    foldersAdded = await mergeFolders(currentKey, await decryptJSON(backupKey, box(header.folders)));
+  }
+
   const existing = new Set(await db.getAllDocIds());
   let imported = 0;
   let skipped = 0;
@@ -169,5 +180,5 @@ export async function importBackup(currentKey, backup, backupPassword, onProgres
     }, pages);
     imported++;
   }
-  return { imported, skipped };
+  return { imported, skipped, foldersAdded };
 }

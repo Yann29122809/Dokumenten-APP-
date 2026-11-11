@@ -106,8 +106,10 @@
           Scan-Filter (schwarz-weiß, kräftiger Kontrast)
         </label>
 
+        <div id="ocr-status" class="ocr-status" role="status" hidden></div>
+
         <form id="scan-form" class="card form-card" novalidate>
-          <label>Kategorie
+          <label>Ablageort
             <select id="doc-category"></select>
           </label>
           <label>Titel
@@ -175,6 +177,17 @@
         <p class="group-note">Verschlüsselung: AES-256 · Schlüssel aus Passwort mit PBKDF2 (600.000 Runden)</p>
       </div>
 
+      <div class="settings-group">
+        <h2>Texterkennung</h2>
+        <div class="card">
+          <label class="settings-row">
+            <span>Text automatisch erkennen</span>
+            <input type="checkbox" class="switch" id="ocr-toggle" checked>
+          </label>
+        </div>
+        <p class="group-note">Liest beim Scannen den Text und schlägt Ablageort, Datum, Titel und Notiz vor. Läuft komplett auf diesem iPhone – deine Dokumente werden nirgendwohin geschickt. Beim ersten Mal werden ca. 5&nbsp;MB Programm und Sprachdaten geladen (Internet nötig), danach geht es auch offline.</p>
+      </div>
+
       <div class="settings-group" id="backup-group">
         <h2>Backup</h2>
         <div class="card">
@@ -210,7 +223,7 @@
       <div class="settings-group">
         <h2>Info</h2>
         <div class="card">
-          <div class="settings-row"><span>Version</span><span class="hint">0.3.0</span></div>
+          <div class="settings-row"><span>Version</span><span class="hint">0.4.0</span></div>
           <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
           <div class="settings-row"><span>Dokumente</span><span class="hint" id="doc-count">–</span></div>
           <div class="settings-row"><span>Belegter Speicher</span><span class="hint" id="storage-used">–</span></div>
