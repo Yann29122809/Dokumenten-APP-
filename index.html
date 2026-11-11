@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Dokumente</title>
+  <meta name="description" content="Private Dokumente scannen und lokal verschlüsselt ablegen.">
+
+  <!-- Sicherheit: nur eigene Dateien laden, keine externen Server -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'">
+  <meta name="referrer" content="no-referrer">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1f4e8c">
+
+  <!-- iPhone / iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Dokumente">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1 id="screen-title">Scannen</h1>
+  </header>
+
+  <main class="app-main">
+    <!-- Bildschirm 1: Scannen -->
+    <section id="screen-scan" class="screen is-active" aria-labelledby="screen-title">
+      <div class="placeholder">
+        <svg class="placeholder-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+        <h2>Dokument scannen</h2>
+        <p>Hier kannst du später Rechnungen, Briefe und andere Dokumente mit der Kamera erfassen.</p>
+        <button class="btn-primary" type="button" disabled>Scan starten</button>
+        <p class="hint">Noch nicht verfügbar</p>
+      </div>
+    </section>
+
+    <!-- Bildschirm 2: Ablage -->
+    <section id="screen-archive" class="screen" aria-labelledby="screen-title" hidden>
+      <ul class="category-list">
+        <li><span class="dot dot-invoice"></span>Rechnungen<span class="count">0</span></li>
+        <li><span class="dot dot-bank"></span>Bank<span class="count">0</span></li>
+        <li><span class="dot dot-insurance"></span>Versicherung<span class="count">0</span></li>
+        <li><span class="dot dot-letter"></span>Briefe<span class="count">0</span></li>
+        <li><span class="dot dot-payslip"></span>Gehaltsabrechnungen<span class="count">0</span></li>
+      </ul>
+      <p class="hint center">Noch keine Dokumente abgelegt.</p>
+    </section>
+
+    <!-- Bildschirm 3: Einstellungen -->
+    <section id="screen-settings" class="screen" aria-labelledby="screen-title" hidden>
+      <div class="settings-group">
+        <h2>Sicherheit</h2>
+        <div class="settings-row"><span>Passwort festlegen</span><span class="hint">bald</span></div>
+        <div class="settings-row"><span>Automatisch sperren</span><span class="hint">bald</span></div>
+      </div>
+      <div class="settings-group">
+        <h2>Daten</h2>
+        <div class="settings-row"><span>Backup exportieren</span><span class="hint">bald</span></div>
+        <div class="settings-row"><span>Backup importieren</span><span class="hint">bald</span></div>
+      </div>
+      <div class="settings-group">
+        <h2>Info</h2>
+        <div class="settings-row"><span>Version</span><span class="hint" id="app-version">0.1.0</span></div>
+        <div class="settings-row"><span>Speicherort</span><span class="hint">Nur auf diesem Gerät</span></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Navigation unten -->
+  <nav class="tab-bar" aria-label="Hauptnavigation">
+    <button class="tab is-active" type="button" data-screen="scan" data-title="Scannen" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+      <span>Scannen</span>
+    </button>
+    <button class="tab" type="button" data-screen="archive" data-title="Ablage">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span>Ablage</span>
+    </button>
+    <button class="tab" type="button" data-screen="settings" data-title="Einstellungen">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      <span>Einstellungen</span>
+    </button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>
