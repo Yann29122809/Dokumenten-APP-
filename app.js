@@ -981,6 +981,7 @@ async function updateInfo() {
     } catch { /* egal */ }
   }
   updatePersistStatus();
+  showInstalledVersion();
 }
 
 // Bittet den Browser, die Daten nicht automatisch zu löschen, wenn der Platz knapp wird.
@@ -1040,13 +1041,16 @@ start();
 // Version gibt. Ist eine da, lädt die App sich neu – im gesperrten
 // Zustand sofort, sonst nach Tippen auf den Hinweis oben.
 // =====================================================================
+const APP_VERSION = '2.1.0';
+let updateRequested = false; // „Nach Updates suchen“ gedrückt → nach dem Update sofort neu laden
+
 if ('serviceWorker' in navigator) {
   const hadController = Boolean(navigator.serviceWorker.controller);
   let reloading = false;
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController || reloading) return;
-    if (document.body.classList.contains('locked')) {
+    if (updateRequested || document.body.classList.contains('locked')) {
       reloading = true;
       location.reload();
     } else {
@@ -1071,3 +1075,52 @@ if ('serviceWorker' in navigator) {
       console.warn('Service Worker konnte nicht registriert werden:', err);
     });
 }
+
+// ---------------------------------------------------------------------
+// Knopf „Nach Updates suchen“ (Mehr → Info)
+// ---------------------------------------------------------------------
+async function showInstalledVersion() {
+  let build = '';
+  try {
+    const name = (await caches.keys()).find((k) => /^dokumente-v\d+$/.test(k));
+    if (name) build = ` · ${name.replace('dokumente-', '')}`;
+  } catch { /* egal */ }
+  $('app-version').textContent = `${APP_VERSION}${build}`;
+}
+showInstalledVersion();
+
+$('update-check').addEventListener('click', async () => {
+  const status = $('update-status');
+  const button = $('update-check');
+  if (!('serviceWorker' in navigator)) { status.textContent = 'Auf diesem Gerät nicht möglich'; return; }
+  if (!navigator.onLine) { status.textContent = 'Kein Internet – Updates gibt es nur online'; return; }
+  // Nichts Ungespeichertes verlieren: Neu laden würde Scan bzw. Export abbrechen
+  if (hasDraft()) { status.textContent = 'Erst den offenen Scan ablegen'; return; }
+  if (zipRunning) { status.textContent = 'Erst den Export abwarten'; return; }
+  button.disabled = true;
+  status.textContent = 'Suche …';
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) throw new Error('kein Service Worker');
+    await registration.update();
+    const incoming = registration.installing || registration.waiting;
+    if (!incoming) {
+      status.textContent = 'Du hast die neueste Version';
+      button.disabled = false;
+      return;
+    }
+    status.textContent = 'Update wird installiert …';
+    updateRequested = true;
+    // Der neue Service Worker übernimmt selbst (skipWaiting) → controllerchange lädt neu.
+    // Falls das ausbleibt: nach der Aktivierung bzw. spätestens nach 30 Sekunden neu laden.
+    incoming.addEventListener('statechange', () => {
+      if (incoming.state === 'activated') setTimeout(() => location.reload(), 300);
+      if (incoming.state === 'redundant') { status.textContent = 'Update fehlgeschlagen – später erneut versuchen'; button.disabled = false; updateRequested = false; }
+    });
+    setTimeout(() => { if (updateRequested) location.reload(); }, 30000);
+  } catch (err) {
+    console.error(err);
+    status.textContent = 'Suche nicht möglich – später erneut versuchen';
+    button.disabled = false;
+  }
+});

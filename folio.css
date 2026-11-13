@@ -706,3 +706,87 @@ body.ls-open .f-tabbar, body.ls-open .f-fab { display: none; }
 .tag-link:focus-visible { outline: 3px solid var(--f-primary); outline-offset: 2px; }
 .edit-tags { display: flex; flex-direction: column; gap: 8px; }
 .sheet-row .f-row-value .f-chip { margin-left: 6px; vertical-align: middle; }
+
+/* =====================================================================
+   Lange drücken: Menü (wie iOS) und Mehrfachauswahl
+   ===================================================================== */
+.doc-card { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.doc-card img { -webkit-user-drag: none; pointer-events: none; }
+.doc-card .doc-card-thumb { transition: transform 0.45s ease; }
+.doc-card.is-pressing .doc-card-thumb { transform: scale(0.95); }
+
+.select-check {
+  position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 50%;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.9); border: 2px solid #B9B5CC; color: transparent;
+}
+.select-check .icon { width: 16px; height: 16px; stroke-width: 3; }
+.doc-card.is-selecting .select-check { display: flex; }
+.doc-card.is-selected .select-check { background: var(--f-primary); border-color: var(--f-primary); color: #fff; }
+.doc-card.is-selected .doc-card-thumb { outline: 3px solid var(--f-primary); outline-offset: 2px; }
+.doc-card.is-selecting:active .doc-card-thumb { transform: none; }
+
+.section-row { display: flex; align-items: center; gap: 12px; }
+.section-row .view-title, .section-row .section-label { margin-bottom: 0; }
+.select-start { min-height: var(--tap); padding: 0 4px; }
+
+/* Leiste unten während der Auswahl */
+body.selecting .f-tabbar, body.selecting .f-fab { display: none; }
+body.selecting .app-main { padding-bottom: 170px; }
+.select-bar {
+  position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 12px); z-index: 120;
+  background: var(--f-card); border: 1px solid var(--f-border); border-radius: var(--r-tab);
+  box-shadow: 0 12px 40px rgba(23, 21, 31, 0.18); padding: 6px 12px 10px;
+}
+.select-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.select-top .f-link { min-height: var(--tap); padding: 0 6px; }
+.select-count { font-size: 15px; font-weight: 800; color: var(--f-text); }
+.select-actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.select-action {
+  position: relative; appearance: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-height: 58px; border: 0; border-radius: 16px; background: var(--f-primary-light); color: var(--f-primary-dark);
+  font: inherit; font-size: 13px; font-weight: 800; cursor: pointer;
+}
+.select-action .icon { width: 22px; height: 22px; }
+.select-action select { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; font-size: 16px; }
+.select-action.is-danger { background: var(--f-danger-bg); color: var(--f-danger); }
+.select-action:disabled, .select-action.is-disabled { opacity: 0.4; }
+.select-action:focus-visible, .select-action:focus-within { outline: 3px solid var(--f-primary); outline-offset: 2px; }
+
+/* Menü am Dokument */
+.ctx-backdrop {
+  position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(23, 21, 31, 0.32); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  animation: ctx-fade 0.18s ease;
+}
+.ctx-panel { width: 100%; max-width: 300px; display: flex; flex-direction: column; gap: 12px; animation: ctx-pop 0.22s ease; }
+.ctx-preview {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;
+}
+.ctx-thumb { width: 132px; aspect-ratio: 3 / 4; border-radius: 16px; overflow: hidden; background: #fff; box-shadow: 0 16px 40px rgba(23, 21, 31, 0.3); }
+.ctx-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.ctx-title { margin-top: 8px; font-size: 16px; font-weight: 800; color: #fff; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.35); overflow-wrap: anywhere; }
+.ctx-meta { font-size: 13px; font-weight: 600; color: rgba(255, 255, 255, 0.85); }
+.ctx-menu { border-radius: 16px; overflow: hidden; background: rgba(255, 255, 255, 0.96); box-shadow: 0 16px 40px rgba(23, 21, 31, 0.25); }
+.ctx-item {
+  position: relative; appearance: none; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  min-height: 48px; padding: 0 16px; border: 0; background: none; font: inherit; font-size: 16px; font-weight: 600;
+  color: var(--f-text); text-align: left; cursor: pointer;
+}
+.ctx-item + .ctx-item { border-top: 1px solid var(--f-divider); }
+.ctx-item .icon { width: 20px; height: 20px; flex: none; }
+.ctx-item:active { background: var(--f-divider); }
+.ctx-item:disabled { color: var(--f-muted); }
+.ctx-item.is-danger { color: var(--f-danger); }
+.ctx-item select { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; font-size: 16px; }
+.ctx-label { display: flex; flex-direction: column; }
+.ctx-sub { font-size: 12px; font-weight: 600; color: var(--f-muted); }
+.ctx-sub:empty { display: none; }
+.ctx-item:focus-visible { outline: 3px solid var(--f-primary); outline-offset: -3px; }
+@keyframes ctx-fade { from { opacity: 0; } }
+@keyframes ctx-pop { from { opacity: 0; transform: scale(0.94); } }
+@media (prefers-reduced-motion: reduce) { .ctx-backdrop, .ctx-panel { animation: none; } }
+.folder-move { position: relative; cursor: pointer; }
+.folder-move select { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; font-size: 16px; }
+.folder-move:focus-within { outline: 3px solid var(--f-primary); outline-offset: 2px; }
+body.selecting .select-start { visibility: hidden; }

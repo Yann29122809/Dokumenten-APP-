@@ -127,6 +127,25 @@ export async function deleteFolder(key, id) {
   await save(key);
 }
 
+/**
+ * Ordner samt Unterordnern und Dokumenten woanders einhängen.
+ * newParentId = null → ganz oben in der Ablage. Die Dokumente behalten ihre
+ * Ordner-ID, deshalb wandern sie automatisch mit.
+ */
+export async function moveFolder(key, id, newParentId) {
+  const folder = folderById(id);
+  if (!folder) return;
+  if (newParentId && descendantIds(id).includes(newParentId)) throw new Error('Ein Ordner kann nicht in sich selbst verschoben werden');
+  if (newParentId && !folderById(newParentId)) throw new Error('Zielordner fehlt');
+  folder.parentId = newParentId || null;
+  // Oberste Ordner brauchen eine eigene Farbe
+  if (!folder.parentId && !folder.color) {
+    const roots = folders.filter((f) => !f.parentId).length;
+    folder.color = PALETTE[roots % PALETTE.length];
+  }
+  await save(key);
+}
+
 /** Beim Backup-Einlesen: fehlende Ordner ergänzen. */
 export async function mergeFolders(key, incoming) {
   let added = 0;
