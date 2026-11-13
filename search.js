@@ -91,7 +91,7 @@ function docEntry(doc) {
     title: m.title || '',
     sender: m.sender || '',
     folder: folderLabel(existingFolderId(m.category)),
-    extra: [m.note, m.date, m.dueDate, m.reminder && m.reminder.amount, (m.fields && Object.values(m.fields).join(' '))].filter(Boolean).join(' '),
+    extra: [m.note, m.date, m.dueDate, m.reminder && m.reminder.amount, m.amount, m.warrantyUntil, Array.isArray(m.tags) ? m.tags.join(' ') : null, (m.fields && Object.values(m.fields).join(' '))].filter(Boolean).join(' '),
     text: texts.join('\n')
   };
 }

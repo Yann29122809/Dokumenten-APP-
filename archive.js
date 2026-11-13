@@ -11,6 +11,7 @@ import {
   createFolder, renameFolder, deleteFolder, fillFolderSelect, askAndCreateFolder, onFoldersChanged
 } from './folders.js';
 import { imagesToPdf } from './makepdf.js';
+import { tagEditor, tagsOf, allTags, hasTag, warrantyStatus } from './tags.js';
 import { openDeadlines, dueLabel, dueClass, openInCalendar, shareCalendarFile, reminderOf, reminderChanges, reminderFields, suggestionCard, LEADS } from './deadlines.js';
 
 const BACKUP_REMINDER_DAYS = 30;
@@ -277,7 +278,8 @@ function backButton(label, target) {
 const COLLECTIONS = {
   soon: { label: 'Bald fällig', icon: 'bell', cls: 'is-warn' },
   year: { label: 'Dieses Jahr', icon: 'calendar2', cls: 'is-primary' },
-  contracts: { label: 'Verträge', icon: 'stack', cls: 'is-ok' }
+  contracts: { label: 'Verträge', icon: 'stack', cls: 'is-ok' },
+  warranty: { label: 'Garantien', icon: 'checkCircle', cls: 'is-blue', onlyIfAny: true }
 };
 
 /** Automatische Sammlungen – nur aus echten Daten berechnet. */
@@ -285,6 +287,14 @@ function collectionDocs(id) {
   const year = String(new Date().getFullYear());
   if (id === 'soon') return openDeadlines(docs);
   if (id === 'year') return docs.filter((d) => (d.meta.date || '').startsWith(year));
+  // Garantien: früheste zuerst, abgelaufene am Ende
+  if (id === 'warranty') {
+    const today = new Date().toISOString().slice(0, 10);
+    return docs.filter((d) => d.meta.warrantyUntil).sort((a, b) => {
+      const ea = a.meta.warrantyUntil < today; const eb = b.meta.warrantyUntil < today;
+      return ea - eb || a.meta.warrantyUntil.localeCompare(b.meta.warrantyUntil);
+    });
+  }
   if (id === 'contracts') {
     return docs.filter((d) => {
       const r = reminderOf(d.meta);
@@ -317,7 +327,8 @@ function renderRoot() {
       toast(`Ablageort „${name.trim()}“ angelegt`);
     }
   };
-  const collections = Object.entries(COLLECTIONS).map(([id, c]) =>
+  const shown = Object.entries(COLLECTIONS).filter(([id, c]) => !c.onlyIfAny || collectionDocs(id).length);
+  const collections = shown.map(([id, c]) =>
     el('button', { type: 'button', class: `collection ${c.cls}`, onclick: () => go({ name: 'collection', id }) },
       icon(c.icon),
       el('span', {},
@@ -337,7 +348,7 @@ function renderRoot() {
     backupReminder(),
     el('div', { class: 'f-block' },
       el('h2', { class: 'f-overline', text: 'Automatische Sammlungen' }),
-      el('div', { class: 'collections' }, collections)
+      el('div', { class: `collections${shown.length === 4 ? ' has-4' : ''}` }, collections)
     ),
     el('div', { class: 'f-block' },
       el('h2', { class: 'f-overline', text: 'Ablageorte' }),
@@ -361,6 +372,7 @@ function renderCollection(id) {
   const empty = {
     soon: 'Keine offenen Fristen. Erkennt Folio beim Scannen eine Frist, kannst du sie als Erinnerung übernehmen.',
     year: 'Aus diesem Jahr gibt es noch keine Dokumente.',
+    warranty: 'Noch keine Garantien eingetragen. Trage beim Scannen oder unter „Bearbeiten“ ein, bis wann die Garantie gilt.',
     contracts: 'Noch keine Verträge erkannt. Dazu zählen Dokumente mit Kündigungs- oder Ablauffrist oder mit „Vertrag“, „Police“ oder „Versicherungsschein“ im Text.'
   }[id];
   show(
@@ -623,14 +635,20 @@ function renderDetail(id) {
   const chips = el('div', { class: 'sheet-chips' },
     folderChip(folderId),
     r ? el('span', { class: `f-chip ${r.done ? 'is-ok' : (daysUntilSafe(r.date) <= 3 ? 'is-danger' : 'is-warn')}`, text: r.done ? `${r.kind}: erledigt` : `${r.kind} bis ${formatDate(r.date).slice(0, 6)}` }) : null,
-    doc.meta.source === 'import' && doc.meta.fileName && /\.pdf$/i.test(doc.meta.fileName) ? el('span', { class: 'f-chip', text: 'Original-PDF' }) : null
+    doc.meta.source === 'import' && doc.meta.fileName && /\.pdf$/i.test(doc.meta.fileName) ? el('span', { class: 'f-chip', text: 'Original-PDF' }) : null,
+    // Tags: antippen zeigt alle Dokumente mit diesem Tag
+    ...tagsOf(doc.meta).map((tag) => el('button', { type: 'button', class: 'f-chip is-tag tag-link', 'aria-label': `Alle Dokumente mit Tag ${tag}`, onclick: () => openTag(tag) }, `# ${tag}`))
   );
+  const warranty = warrantyStatus(doc.meta.warrantyUntil);
   const amount = amountOf(doc);
   const field = (label, value) => el('div', { class: 'sheet-row' }, el('span', { class: 'f-row-label', text: label }), el('span', { class: 'f-row-value', text: value }));
   const fields = el('div', { class: 'sheet-fields' },
     doc.meta.sender ? field('Absender', doc.meta.sender) : null,
     field('Datum', formatDate(doc.meta.date)),
     amount !== null ? field('Betrag', `${amount.toFixed(2).replace('.', ',')} €`) : null,
+    warranty ? el('div', { class: 'sheet-row' },
+      el('span', { class: 'f-row-label', text: 'Garantie bis' }),
+      el('span', { class: 'f-row-value' }, formatDate(doc.meta.warrantyUntil), ' ', el('span', { class: `f-chip ${warranty.cls}`, text: warranty.text }))) : null,
     field('Seiten', String(count))
   );
 
@@ -770,6 +788,9 @@ function renderEdit(doc, proposal = null) {
   const date = el('input', { type: 'date', value: doc.meta.date });
   const note = el('textarea', { rows: '3', maxlength: '1000' });
   note.value = doc.meta.note || '';
+  const amount = el('input', { type: 'text', inputmode: 'decimal', maxlength: '30', placeholder: 'optional, z. B. 89,90 €', value: doc.meta.amount || '' });
+  const warranty = el('input', { type: 'date', value: doc.meta.warrantyUntil || '' });
+  const tags = tagEditor(tagsOf(doc.meta), allTags(docs).map((t) => t.tag));
   const reminder = reminderFields(proposal || reminderOf(doc.meta));
   const error = el('p', { class: 'error', role: 'alert' });
 
@@ -777,6 +798,9 @@ function renderEdit(doc, proposal = null) {
     el('label', {}, 'Ablageort', category),
     el('label', {}, 'Titel', title),
     el('label', {}, 'Datum des Dokuments', date),
+    el('label', {}, 'Betrag', amount),
+    el('div', { class: 'edit-tags' }, el('span', { class: 'lead-title', text: 'Tags' }), tags.node),
+    el('label', {}, 'Garantie bis (optional)', warranty),
     el('label', {}, 'Notiz', note),
     el('div', { class: 'edit-reminder' }, el('span', { class: 'lead-title', text: 'Erinnerung' }), reminder.node),
     error,
@@ -788,6 +812,7 @@ function renderEdit(doc, proposal = null) {
     try {
       doc.meta = await updateMeta(ctx.getKey(), doc, {
         title: title.value.trim(), category: existingFolderId(selected), date: date.value || doc.meta.date, note: note.value.trim(),
+        amount: amount.value.trim() || null, tags: tags.read(), warrantyUntil: warranty.value || null,
         ...reminderChanges(reminder.read())
       });
       toast('Änderungen gespeichert');
@@ -871,7 +896,13 @@ async function remove(doc, back) {
 // =====================================================================
 // Bildschirm „Suche“ (05)
 // =====================================================================
-let searchState = { query: '', folder: '', period: '', amount: '' };
+let searchState = { query: '', folder: '', period: '', amount: '', tag: '' };
+
+/** Suche mit Tag-Filter öffnen (aus der Dokument-Ansicht). */
+function openTag(tag) {
+  searchState = { query: '', folder: '', period: '', amount: '', tag };
+  ctx.openSearch({ focus: false });
+}
 let searchUrls = [];
 
 /** Betrag eines Dokuments (aus Angaben, Erinnerung oder erkanntem Text) */
@@ -922,7 +953,7 @@ function releaseSearchUrls() {
 
 export function clearSearchScreen() {
   releaseSearchUrls();
-  searchState = { query: '', folder: '', period: '', amount: '' };
+  searchState = { query: '', folder: '', period: '', amount: '', tag: '' };
   const box = document.getElementById('search-view');
   if (box) box.replaceChildren();
 }
@@ -937,7 +968,7 @@ export function renderSearchScreen({ focus = false } = {}) {
   const clear = el('button', { type: 'button', class: 'search-clear', 'aria-label': 'Suchbegriff löschen', onclick: () => { input.value = ''; update(); input.focus(); } }, icon('x'));
   const pill = el('label', { class: 'search-pill' }, icon('search'), input, clear);
   const cancel = el('button', { type: 'button', class: 'f-link search-cancel', text: 'Abbrechen', onclick: () => {
-    searchState = { query: '', folder: '', period: '', amount: '' };
+    searchState = { query: '', folder: '', period: '', amount: '', tag: '' };
     renderSearchScreen();
   } });
 
@@ -949,13 +980,16 @@ export function renderSearchScreen({ focus = false } = {}) {
     const chosen = options.find(([v]) => v === searchState[key]);
     return el('label', { class: `f-filter${searchState[key] ? ' is-active' : ''}` }, chosen ? chosen[1] : label, icon('down'), sel);
   };
-  const anyFilter = () => searchState.folder || searchState.period || searchState.amount;
+  const anyFilter = () => searchState.folder || searchState.period || searchState.amount || searchState.tag;
+  const tagOptions = allTags(docs).map(({ tag, count }) => [tag, `# ${tag} (${count})`]);
   const filters = el('div', { class: 'filter-row' },
-    el('button', { type: 'button', class: `f-filter${anyFilter() ? '' : ' is-active'}`, onclick: () => { Object.assign(searchState, { folder: '', period: '', amount: '' }); update(); } }, 'Alle'),
+    el('button', { type: 'button', class: `f-filter${anyFilter() ? '' : ' is-active'}`, onclick: () => { Object.assign(searchState, { folder: '', period: '', amount: '', tag: '' }); update(); } }, 'Alle'),
     chipSelect('Ablageort', 'folder', flatFolders().map((f) => [f.id, f.label.trim()])),
     chipSelect('Zeitraum', 'period', [['month', 'Dieser Monat'], ['30', 'Letzte 30 Tage'], ['365', 'Letzte 12 Monate'], [`y${year}`, String(year)], [`y${year - 1}`, String(year - 1)]]),
-    chipSelect('Betrag', 'amount', [['lt50', 'unter 50 €'], ['50to100', '50–100 €'], ['gt100', 'über 100 €']])
+    chipSelect('Betrag', 'amount', [['lt50', 'unter 50 €'], ['50to100', '50–100 €'], ['gt100', 'über 100 €']]),
+    tagOptions.length ? chipSelect('Tag', 'tag', tagOptions) : null
   );
+  const tagMatches = (doc) => !searchState.tag || hasTag(doc.meta, searchState.tag);
   const results = el('div', { class: 'search-results' });
 
   const update = () => {
@@ -966,12 +1000,12 @@ export function renderSearchScreen({ focus = false } = {}) {
     const q = searchState.query.trim();
     let hits;
     if (q) {
-      hits = runSearch(q, searchFilter()).filter((h) => amountMatches(h.doc, searchState.amount));
+      hits = runSearch(q, searchFilter()).filter((h) => amountMatches(h.doc, searchState.amount) && tagMatches(h.doc));
     } else if (anyFilter()) {
       const f = searchFilter();
       hits = docs.filter((d) => (!f.folderIds || f.folderIds.has(existingFolderId(d.meta.category)))
         && (!f.from || (d.meta.date || '') >= f.from) && (!f.to || (d.meta.date || '') <= f.to)
-        && amountMatches(d, searchState.amount)).map((doc) => ({ doc, page: 0, snippet: null, terms: [] }));
+        && amountMatches(d, searchState.amount) && tagMatches(d)).map((doc) => ({ doc, page: 0, snippet: null, terms: [] }));
     } else {
       results.replaceChildren(...suggestionsBlock(input, update));
       return;

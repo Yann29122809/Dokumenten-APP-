@@ -2,7 +2,7 @@
 
 // Bei jeder Änderung an den Dateien diese Nummer erhöhen,
 // damit Handys die neue Version laden.
-const CACHE_NAME = 'dokumente-v22';
+const CACHE_NAME = 'dokumente-v24';
 
 // Die großen Dateien der Texterkennung liegen in einem eigenen Speicher.
 // Er bleibt bei App-Updates erhalten, damit sie nicht jedes Mal neu
@@ -34,6 +34,9 @@ const APP_FILES = [
   './folio.css',
   './today.js',
   './livescan.js',
+  './zipwriter.js',
+  './zipexport.js',
+  './tags.js',
   './app.js',
   './crypto.js',
   './db.js',

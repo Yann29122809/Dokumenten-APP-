@@ -1,8 +1,8 @@
 import { createVault, openVault, openVaultForWrapping, changeVaultPassword, WrongPasswordError } from './crypto.js';
 import { faceIdAvailable, getFaceIdRecord, enableFaceId, unlockWithFaceId, disableFaceId } from './faceid.js';
 import { getMeta, setMeta } from './db.js';
-import { formatBytes, toast } from './dom.js';
-import { hydrateIcons } from './icons.js';
+import { formatBytes, toast, el } from './dom.js';
+import { hydrateIcons, icon } from './icons.js';
 import { initScan, clearScan, addCapturedFile, hasDraft } from './scan.js';
 import { openLiveScan, closeLiveScan } from './livescan.js';
 import { initArchive, refreshArchive, clearArchive, showRoot, documentCount, getDocs, pageTextReady, getTrashed, renderTrash, openDoc, updateDupBanner, renderSearchScreen, clearSearchScreen, openDocFrom, openCollection } from './archive.js';
@@ -16,6 +16,7 @@ import { initToday, renderToday, clearToday } from './today.js';
 import { initDupCheck, checkBeforeSave, findAllPairs, scanAllDuplicates, reviewPending, revalidatePending } from './dupcheck.js';
 import { loadDecisions, clearDecisions, loadPending, clearPending, onPendingChange, getPending } from './duplicates.js';
 import { createBackup, saveBackupFile, readBackupFile, importBackup, BackupFormatError } from './backup.js';
+import { exportFolderZip, ExportLockedError } from './zipexport.js';
 
 const $ = (id) => document.getElementById(id);
 const MIN_PASSWORD_LENGTH = 8;
@@ -241,6 +242,7 @@ function lock() {
   stopOcr();
   $('migration-dialog').hidden = true;
   resetBackupUi();
+  resetZipUi();
   clearPasswordFields();
   $('unlock-error').textContent = '';
   $('change-pw-form').hidden = true;
@@ -540,7 +542,7 @@ initImport({
 });
 
 initArchive({
-  openSearch: () => { showScreen('search'); renderSearchScreen({ focus: true }); },
+  openSearch: (opts = {}) => { showScreen('search'); renderSearchScreen({ focus: opts.focus !== false }); },
   openDocFromSearch: (id, page, terms) => { showScreen('archive'); openDocFrom(id, page, terms); },
   openCollectionSoon: () => { showScreen('archive'); openCollection('soon'); },
   getPendingCount: () => getPending().length,
@@ -768,6 +770,166 @@ $('backup-file').addEventListener('change', async () => {
 });
 
 $('import-cancel').addEventListener('click', resetBackupUi);
+
+// =====================================================================
+// Ordner-Export (ZIP) – liest nur, verändert nichts
+// =====================================================================
+let pendingZip = null;
+let zipRunning = false;
+
+function resetZipUi() {
+  pendingZip = null;
+  $('zip-progress').hidden = true;
+  $('zip-ready').hidden = true;
+  $('zip-error').hidden = true;
+  $('zip-export').disabled = zipRunning;
+  document.querySelectorAll('.zip-dialog').forEach((n) => n.remove());
+}
+
+/**
+ * Hinweis „nicht verschlüsselt“ + Bestätigung mit Face ID oder Passwort.
+ * Ergebnis: true, wenn bestätigt; false bei „Abbrechen“.
+ */
+function confirmZipExport() {
+  return new Promise((resolve) => {
+    const usesFaceId = Boolean(faceIdRecord);
+    const password = el('input', { type: 'password', autocomplete: 'current-password', 'aria-label': 'Passwort' });
+    const user = el('input', { class: 'sr-only', type: 'text', name: 'username', autocomplete: 'username', value: 'Dokumente-App', tabindex: '-1', 'aria-hidden': 'true' });
+    const pwLabel = el('label', { class: 'zip-pw' }, 'Passwort zur Bestätigung', password);
+    pwLabel.hidden = usesFaceId;
+    const error = el('p', { class: 'error', role: 'alert' });
+    const go = el('button', { type: 'submit', class: 'btn-primary' }, usesFaceId ? 'Mit Face ID exportieren' : 'Exportieren');
+    const cancel = el('button', { type: 'button', class: 'btn-ghost' }, 'Abbrechen');
+    const usePw = el('button', { type: 'button', class: 'btn-text' }, 'Stattdessen Passwort eingeben');
+    usePw.hidden = !usesFaceId;
+
+    const form = el('form', { class: 'dialog zip-confirm', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'zip-dialog-title', novalidate: true },
+      el('span', { class: 'dialog-icon is-warn' }, icon('lock')),
+      el('h2', { id: 'zip-dialog-title', text: 'Unverschlüsselt exportieren?' }),
+      el('p', { text: 'Die ZIP enthält alle Dokumente als normale PDFs. Jeder, der die Datei hat, kann sie öffnen.' }),
+      el('p', { class: 'hint', text: 'Bewahre sie nur an einem sicheren Ort auf und lösche Kopien, die du nicht mehr brauchst.' }),
+      user, pwLabel, error, go, usePw, cancel
+    );
+    const backdrop = el('div', { class: 'dialog-backdrop zip-dialog' }, form);
+    document.body.append(backdrop);
+    (usesFaceId ? go : password).focus();
+
+    const close = (ok) => { backdrop.remove(); resolve(ok); };
+    cancel.addEventListener('click', () => close(false));
+    usePw.addEventListener('click', () => {
+      pwLabel.hidden = false;
+      usePw.hidden = true;
+      go.textContent = 'Exportieren';
+      password.focus();
+    });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error.textContent = '';
+      go.disabled = true;
+      try {
+        if (pwLabel.hidden) {
+          await unlockWithFaceId(faceIdRecord);
+        } else {
+          if (!password.value) { error.textContent = 'Bitte Passwort eingeben.'; return; }
+          await openVault(vaultRecord, password.value);
+        }
+        password.value = '';
+        close(true);
+      } catch (err) {
+        if (err instanceof WrongPasswordError) error.textContent = 'Falsches Passwort.';
+        else if (pwLabel.hidden) {
+          error.textContent = (err && err.message) || 'Face ID hat nicht geklappt.';
+          pwLabel.hidden = false;
+          usePw.hidden = true;
+          go.textContent = 'Exportieren';
+        } else error.textContent = 'Bestätigung fehlgeschlagen.';
+      } finally {
+        go.disabled = false;
+      }
+    });
+  });
+}
+
+$('zip-export').addEventListener('click', async () => {
+  if (!vaultKey || zipRunning) return;
+  resetZipUi();
+  if (!(await confirmZipExport())) return;
+  if (!vaultKey) return;
+
+  zipRunning = true;
+  $('zip-export').disabled = true;
+  $('zip-progress').hidden = false;
+  const fill = $('zip-bar-fill');
+  const text = $('zip-progress-text');
+  fill.style.width = '0%';
+  text.textContent = 'Export wird vorbereitet …';
+  // Bildschirm anlassen, damit iOS die App während des Exports nicht sperrt
+  let wakeLock = null;
+  try { wakeLock = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch { wakeLock = null; }
+
+  try {
+    const result = await exportFolderZip({
+      getKey: () => vaultKey,
+      onProgress: ({ done, total }) => {
+        resetInactivityTimer(); // Export zählt als Benutzung
+        fill.style.width = total ? `${Math.round((done / total) * 100)}%` : '100%';
+        text.textContent = total ? `${Math.min(done + 1, total)} von ${total} Dokumenten …` : 'Keine Dokumente vorhanden …';
+        if (done >= total) text.textContent = 'ZIP-Datei wird fertiggestellt …';
+      }
+    });
+    if (!vaultKey) return;
+    pendingZip = result;
+    $('zip-progress').hidden = true;
+    const docs = result.docCount === 1 ? '1 Dokument' : `${result.docCount} Dokumente`;
+    const folders = result.folderCount === 1 ? '1 Ordner' : `${result.folderCount} Ordner`;
+    $('zip-ready-text').textContent = `Fertig: ${docs} in ${folders} (${formatBytes(result.blob.size)}).`;
+    $('zip-ready-failed').textContent = result.failed.length
+      ? `Übersprungen (${result.failed.length}): ${result.failed.map((f) => `„${f.title}“`).join(', ')} – steht auch in LIESMICH.txt.`
+      : '';
+    $('zip-ready').hidden = false;
+    $('zip-save').focus();
+  } catch (err) {
+    console.error(err);
+    $('zip-progress').hidden = true;
+    if (err instanceof ExportLockedError) return; // gesperrt: Oberfläche ist schon geleert
+    $('zip-error').textContent = `Export fehlgeschlagen: ${(err && err.message) || 'unbekannter Fehler'}. Es wurde nichts verändert.`;
+    $('zip-error').hidden = false;
+  } finally {
+    zipRunning = false;
+    $('zip-export').disabled = false;
+    if (wakeLock) wakeLock.release().catch(() => {});
+  }
+});
+
+$('zip-save').addEventListener('click', async () => {
+  if (!pendingZip) return;
+  const file = new File([pendingZip.blob], pendingZip.fileName, { type: 'application/zip' });
+  suspendAutoLock();
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: pendingZip.fileName });
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        throw err;
+      }
+    } else {
+      const url = URL.createObjectURL(file);
+      const link = el('a', { href: url, download: pendingZip.fileName });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+    toast('ZIP-Datei gesichert');
+    resetZipUi();
+  } catch (err) {
+    console.error(err);
+    toast('Sichern hat nicht geklappt', 'error');
+  } finally {
+    resumeAutoLock();
+  }
+});
 
 $('import-form').addEventListener('submit', async (event) => {
   event.preventDefault();

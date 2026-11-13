@@ -217,10 +217,15 @@
 
           <div id="reminder-suggestion-slot"></div>
 
+          <div class="erk-tags" id="scan-tags-slot"></div>
+
           <details class="f-card erk-more">
-            <summary>Notiz und eigene Erinnerung</summary>
+            <summary>Notiz, Garantie und eigene Erinnerung</summary>
             <label class="erk-note">Notiz (optional)
               <textarea id="doc-note" rows="2" maxlength="1000"></textarea>
+            </label>
+            <label class="erk-note">Garantie bis (optional)
+              <input type="date" id="doc-warranty">
             </label>
             <div id="reminder-slot"></div>
           </details>
@@ -376,7 +381,7 @@
       </div>
 
       <div class="settings-group" id="backup-group">
-        <h2>Backup</h2>
+        <h2>Sicherung</h2>
         <div class="card">
           <div class="settings-row"><span class="f-row-icon" data-icon="clock"></span><span>Letztes Backup</span><span class="hint" id="last-backup">noch nie</span></div>
           <button class="settings-row" type="button" id="backup-create">
@@ -402,7 +407,22 @@
             <button class="btn-text" type="button" id="import-cancel">Abbrechen</button>
           </form>
           <p class="inline-form success" id="import-result" role="status" hidden></p>
+          <button class="settings-row" type="button" id="zip-export">
+            <span class="f-row-icon" data-icon="folder"></span><span>Als Ordner exportieren (ZIP)</span><span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <div class="inline-form zip-progress" id="zip-progress" hidden>
+            <div class="zip-bar" aria-hidden="true"><span id="zip-bar-fill"></span></div>
+            <p id="zip-progress-text" role="status">Export wird vorbereitet …</p>
+          </div>
+          <div class="inline-form" id="zip-ready" hidden>
+            <p class="success" id="zip-ready-text" role="status"></p>
+            <p class="error" id="zip-ready-failed"></p>
+            <button class="btn-primary" type="button" id="zip-save">ZIP-Datei sichern …</button>
+            <p class="hint">Im nächsten Fenster „In Dateien sichern“ oder AirDrop wählen. Am Computer wird die Datei heruntergeladen.</p>
+          </div>
+          <p class="error inline-form" id="zip-error" role="alert" hidden></p>
         </div>
+        <p class="group-note">Der Ordner-Export enthält alle Dokumente als normale PDFs in deiner Ordnerstruktur – lesbar ohne Folio, aber <strong>nicht verschlüsselt</strong>. Zum Wiederherstellen in Folio dient das Backup.</p>
         <p class="group-note">Das Backup ist verschlüsselt. Bewahre es außerhalb des iPhones auf, z.&nbsp;B. in iCloud Drive oder auf einem USB-Stick. Mach regelmäßig ein neues.</p>
         <input class="sr-only" type="file" id="backup-file" tabindex="-1" aria-hidden="true">
       </div>

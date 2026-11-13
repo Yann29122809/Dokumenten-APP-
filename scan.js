@@ -14,6 +14,7 @@ import { openCropper } from './cropper.js';
 import { suggestFromText } from './suggest.js';
 import { reminderFields, reminderChanges } from './deadlines.js';
 import { imagesToPdf } from './makepdf.js';
+import { tagEditor, allTags } from './tags.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -31,12 +32,15 @@ let lastFolderId = 'invoice';
 
 const FIELDS = { category: 'doc-category', title: 'doc-title', date: 'doc-date', note: 'doc-note', amount: 'doc-amount' };
 let reminder = null;          // Eingabefelder der Erinnerung
+let tags = null;              // Tag-Eingabe
 let reminderDismissed = false; // Vorschlag abgelehnt
 
 export function initScan(context) {
   ctx = context;
   reminder = reminderFields(null);
   $('reminder-slot').replaceChildren(reminder.node);
+  tags = tagEditor([], []);
+  $('scan-tags-slot').replaceChildren(tags.node);
   $('doc-date').value = todayISO();
 
   const pick = (inputId) => () => {
@@ -157,6 +161,8 @@ async function addFiles(files) {
 // Seiten anzeigen
 // ---------------------------------------------------------------------
 function render() {
+  // Vorschläge für Tags aus den vorhandenen Dokumenten
+  if (tags && ctx.getKey()) tags.setSuggestions(allTags(ctx.getDocs()).map((t) => t.tag));
   const waiting = preparing + preparingQueued;
   const hasPages = pages.length > 0 || waiting > 0;
   $('scan-empty').hidden = hasPages;
@@ -470,6 +476,8 @@ async function onSave(event) {
     const title = $('doc-title').value.trim() || `${folderSingular(category)} ${formatDate(date)}`;
     const note = $('doc-note').value.trim();
     const amount = $('doc-amount').value.trim() || null;
+    const tagList = tags.read();
+    const warrantyUntil = $('doc-warranty').value || null;
     // Fertig erkannte Seiten gleich mitspeichern, die übrigen erledigt die Warteschlange
     const texts = pages.map((p) => (p.ocr.status === 'done' ? { text: p.ocr.text, words: p.ocr.words, w: p.ocr.w, h: p.ocr.h } : null));
     const sender = suggestion && suggestion.sender ? suggestion.sender : null;
@@ -480,7 +488,7 @@ async function onSave(event) {
     const finished = [];
     for (const page of pages) finished.push(await renderPage(page.blob, page.rotation, filter));
     const thumb = await makeThumb(finished[0]);
-    const meta = { title, category, date, note, sender, ...(amount ? { amount } : {}), ...reminderChanges(confirmedReminder) };
+    const meta = { title, category, date, note, sender, ...(amount ? { amount } : {}), ...(tagList.length ? { tags: tagList } : {}), ...(warrantyUntil ? { warrantyUntil } : {}), ...reminderChanges(confirmedReminder) };
     const missing = texts.map((t, i) => (t ? null : i)).filter((i) => i !== null);
     const doSave = async (extraMeta = {}) => {
       const id = await saveDocument(key, { ...meta, ...extraMeta }, finished, thumb, { texts });
@@ -575,6 +583,7 @@ export function clearScan() {
   suggestion = null;
   reminderDismissed = false;
   if (reminder) reminder.set(null);
+  if (tags) tags.set([]);
   $('reminder-suggestion-slot').replaceChildren();
   $('scan-form').reset();
   Object.keys(FIELDS).forEach(unmark);

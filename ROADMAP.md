@@ -53,7 +53,7 @@ verschlüsselten App.
 
 ## Weitere Ideen ohne Server (später möglich)
 
-- Tags quer zu Ordnern (Suche und Duplikat-Zusammenführung sind darauf vorbereitet)
+- Tags automatisch vorschlagen (z. B. aus dem Absender) und „Garantie bis“ aus dem Kassenbon erkennen
 - Share Target für Android (iPhone-Safari unterstützt es nicht, daher weggelassen)
 - Native App mit Capacitor (99 €/Jahr Apple-Entwicklerkonto): Apples
   Dokumentenscanner, Texterkennung und echte lokale Mitteilungen
@@ -63,9 +63,6 @@ verschlüsselten App.
 Diese Punkte zeigt das Design. Sie sind bewusst nicht mit Beispieldaten
 nachgebaut, sondern fehlen oder haben einen leeren Zustand.
 
-- **Tags** (z. B. „Strom“, „Wohnung“ auf dem Erkannt-Bildschirm): braucht ein
-  neues Feld im Datenmodell, eine Eingabe und Filter in der Suche. Möglich ohne
-  Server, wird aber erst nach Rückfrage gebaut, weil es das Datenmodell erweitert.
 - **Automatisches Auslösen im Live-Scan:** Heute zeigt der Rahmen, wo das Blatt
   erkannt wird, und du drückst selbst den Auslöser. Automatik bräuchte eine
   zuverlässigere Erkennung (sonst entstehen unscharfe oder doppelte Fotos).
